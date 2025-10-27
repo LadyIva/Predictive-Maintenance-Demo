@@ -30,7 +30,7 @@ CONFIG = {
     "SCORE_THRESHOLD_90_PERCENT": -0.15,  # Score that corresponds to 90% confidence
     "MAX_NORMAL_SCORE": 0.05,  # Max score for 0% confidence
     # Real-time RUL/Lead Time: If AI is confident, predict failure in this many days
-    "PREDICTED_LEAD_TIME_DAYS": 25, 
+    "PREDICTED_LEAD_TIME_DAYS": 25,
 }
 
 st.set_page_config(
@@ -86,11 +86,11 @@ st.markdown(
 )
 
 # --- Session State Management for Live Mode ---
-if 'days_progressed' not in st.session_state:
+if "days_progressed" not in st.session_state:
     # Start the demo at a point just before failure for maximum impact (e.g., 90% of max days)
     # The actual max value is determined later, so we initialize to a safe value.
     st.session_state.days_progressed = 1
-if 'playing' not in st.session_state:
+if "playing" not in st.session_state:
     st.session_state.playing = False
 
 
@@ -210,28 +210,30 @@ def get_prediction_metrics(df_slice):
     """
 
     latest_confidence = df_slice["AI_Confidence_Score"].iloc[-1]
-    
+
     # The current moment in time for the simulation
-    current_time = df_slice.index[-1] 
-    
+    current_time = df_slice.index[-1]
+
     anomaly_flag_date = None
     predicted_failure_date = None
     days_left = 0
-    
+
     # 90%+ confidence is the critical prediction moment (realistic action threshold)
     if latest_confidence >= 90.0:
-        
+
         # 1. Find the first time the AI confidence jumped over 90% in the entire slice
         critical_anomalies = df_slice[df_slice["AI_Confidence_Score"] >= 90.0]
         if not critical_anomalies.empty:
             anomaly_flag_date = critical_anomalies.index[0]
         else:
-            anomaly_flag_date = current_time # Fallback
+            anomaly_flag_date = current_time  # Fallback
 
         # 2. Real-Time Forecasting: Calculate the Predicted Failure Date
         # RUL (Remaining Useful Life) is simply added to the current time.
-        predicted_failure_date = current_time + timedelta(days=CONFIG["PREDICTED_LEAD_TIME_DAYS"])
-        
+        predicted_failure_date = current_time + timedelta(
+            days=CONFIG["PREDICTED_LEAD_TIME_DAYS"]
+        )
+
         # 3. Days left until the predicted failure
         days_left = CONFIG["PREDICTED_LEAD_TIME_DAYS"]
 
@@ -271,7 +273,7 @@ def render_plant_manager_view(
     col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
 
     is_critical_alert = latest_confidence >= 90
-    
+
     with col1:
         st.markdown('<div class="confidence-card">', unsafe_allow_html=True)
         st.markdown(f"**AI Failure Confidence** (0-100%)")
@@ -279,17 +281,15 @@ def render_plant_manager_view(
         st.progress(latest_confidence / 100)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    
     # --- Real-Time Predictive KPI ---
     lead_time_display = f"{days_left} Days Lead Time"
-    
+
     # The actionable Remaining Useful Life (RUL) only appears with high confidence
     if is_critical_alert:
         date_value_display = predicted_failure_date.strftime("%Y-%m-%d")
     else:
         date_value_display = "---"
         lead_time_display = "System Normal"
-
 
     col2.metric(
         label="Predicted Failure Date (Actionable RUL)",
@@ -302,7 +302,7 @@ def render_plant_manager_view(
         label="Expected Failures Preventable (Annual)",
         value=f"{CONFIG['DEFAULT_FAILURES_PREVENTED_PER_YEAR']} ",
     )
-    
+
     status_text = (
         "CRITICAL ALERT"
         if is_critical_alert
@@ -486,10 +486,12 @@ def main():
 
         # --- REAL-TIME DATA STREAM SIMULATION CONTROL ---
         total_days = (full_data_df.index[-1] - full_data_df.index[0]).days
-        
+
         # Ensure initial state is set to a reasonable starting point
-        if 'initial_load' not in st.session_state:
-            st.session_state.days_progressed = int(total_days * 0.5) # Start halfway for quicker demo
+        if "initial_load" not in st.session_state:
+            st.session_state.days_progressed = int(
+                total_days * 0.5
+            )  # Start halfway for quicker demo
             st.session_state.initial_load = True
 
         # Slider linked to session state
@@ -497,25 +499,35 @@ def main():
             "Simulated Data Progress (Days)",
             min_value=1,
             max_value=total_days,
-            value=st.session_state.days_progressed, 
+            value=st.session_state.days_progressed,
             step=1,
             key="_slider_control_",
             help="Manually advance or rewind the data stream.",
         )
-        
+
         # Play/Pause Controls
         col_play, col_pause = st.columns(2)
-        
+
         with col_play:
-            if st.button("▶️ Start Live Stream", use_container_width=True, disabled=st.session_state.playing):
+            if st.button(
+                "▶️ Start Live Stream",
+                use_container_width=True,
+                disabled=st.session_state.playing,
+            ):
                 st.session_state.playing = True
-        
+
         with col_pause:
-            if st.button("⏸️ Pause Stream", use_container_width=True, disabled=not st.session_state.playing):
+            if st.button(
+                "⏸️ Pause Stream",
+                use_container_width=True,
+                disabled=not st.session_state.playing,
+            ):
                 st.session_state.playing = False
 
         # Calculate the end date based on the *progress* from the start
-        end_date = full_data_df.index[0] + timedelta(days=st.session_state.days_progressed)
+        end_date = full_data_df.index[0] + timedelta(
+            days=st.session_state.days_progressed
+        )
 
         # Slice the data up to the simulated end date (this simulates the live stream)
         df_slice = full_data_df.loc[full_data_df.index <= end_date].copy()
@@ -527,7 +539,7 @@ def main():
         latest_confidence, anomaly_flag_date, predicted_failure_date, days_left = (
             get_prediction_metrics(df_slice)
         )
-        
+
         # Display Current Simulated Time
         st.markdown("---")
         st.info(
@@ -536,17 +548,17 @@ def main():
 
     # --- Real-Time Auto-Advance Logic (runs outside the sidebar) ---
     if st.session_state.playing and st.session_state.days_progressed < total_days:
-        
+
         # Show processing status to simulate a brief latency window
         status_message = st.empty()
         status_message.info(
             f"**LIVE STREAMING:** Processing new data point for Day {st.session_state.days_progressed + 1}..."
         )
-        
+
         # Update state and trigger rerun
-        time.sleep(0.01) # Short delay for smooth animation
+        time.sleep(0.01)  # Short delay for smooth animation
         st.session_state.days_progressed += 1
-        
+
         # Clear status and rerun the app loop
         status_message.empty()
         st.rerun()
@@ -555,7 +567,6 @@ def main():
     if st.session_state.days_progressed >= total_days and st.session_state.playing:
         st.session_state.playing = False
         st.sidebar.error("⚠️ **SIMULATION ENDED:** Failure event has occurred.")
-
 
     # --- Main Dashboard Rendering (Role Switch) ---
 
