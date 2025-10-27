@@ -551,12 +551,15 @@ def main():
 
         # Show processing status to simulate a brief latency window
         status_message = st.empty()
+
+        # *** KEY CHANGE: Increased sleep time to 6 seconds for better visualization ***
+        time.sleep(6)
+
         status_message.info(
             f"**LIVE STREAMING:** Processing new data point for Day {st.session_state.days_progressed + 1}..."
         )
 
         # Update state and trigger rerun
-        time.sleep(0.01)  # Short delay for smooth animation
         st.session_state.days_progressed += 1
 
         # Clear status and rerun the app loop
