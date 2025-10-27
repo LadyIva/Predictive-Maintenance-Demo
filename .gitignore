@@ -1,0 +1,12 @@
+venv
+.venv
+
+# Python compilation
+__pycache__
+*.pyc
+
+# Streamlit Cache
+.streamlit/cache
+
+# Data files that might be generated (keep the CSV empty/small)
+*.csv
