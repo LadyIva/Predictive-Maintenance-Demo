@@ -4,13 +4,12 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import timedelta
+from datetime import timedelta, datetime
 import time
 import os
 
 # ==============================================================================
 # 1. CONFIGURATION AND STYLING (Req 1 & 5)
-# All parameters are now centralized for quick "re-skinning"
 # ==============================================================================
 CONFIG = {
     # Req 5: Operational Flexibility - Asset Details
@@ -20,7 +19,7 @@ CONFIG = {
     # Req 1: Branding and Theme
     "PRIMARY_COLOR": "#0052CC",  # Blue - Professional and clean
     "SECONDARY_COLOR": "#FFD700",  # Gold/Yellow - For alerts
-    "LOGO_TEXT": "S.I.L.K.E AI",
+    "LOGO_TEXT": "S.I.L.K.E. AI",
     "FONT_FAMILY": "Roboto, sans-serif",
     # Req 4: ROI Calculator Defaults
     "DEFAULT_DOWNTIME_COST_PER_HOUR": 50000,  # R50,000
@@ -30,6 +29,8 @@ CONFIG = {
     # Req 3: AI Prediction Logic Tuning (for IsolationForest score mapping)
     "SCORE_THRESHOLD_90_PERCENT": -0.15,  # Score that corresponds to 90% confidence
     "MAX_NORMAL_SCORE": 0.05,  # Max score for 0% confidence
+    # Real-time RUL/Lead Time: If AI is confident, predict failure in this many days
+    "PREDICTED_LEAD_TIME_DAYS": 25, 
 }
 
 st.set_page_config(
@@ -84,12 +85,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# --- Session State Management for Live Mode ---
+if 'days_progressed' not in st.session_state:
+    # Start the demo at a point just before failure for maximum impact (e.g., 90% of max days)
+    # The actual max value is determined later, so we initialize to a safe value.
+    st.session_state.days_progressed = 1
+if 'playing' not in st.session_state:
+    st.session_state.playing = False
+
 
 # ==============================================================================
 # 2. DATA LOADING AND MODEL INITIALIZATION
 # ==============================================================================
 
-# Note: Using a mock file name. The user must ensure this file exists
 file_path = "maize_mill_simulated_sensor_data.csv"
 
 
@@ -155,7 +163,6 @@ def calculate_ml_confidence(raw_score):
         return 0.0
 
     # Linear scaling: Map MAX_NORMAL_SCORE to 0% and SCORE_THRESHOLD_90_PERCENT to 90%
-    # We define a range for normalization
     score_range = CONFIG["MAX_NORMAL_SCORE"] - CONFIG["SCORE_THRESHOLD_90_PERCENT"]
 
     if raw_score >= CONFIG["MAX_NORMAL_SCORE"]:
@@ -197,50 +204,41 @@ def process_data_slice(df_slice, model, features):
 
 
 def get_prediction_metrics(df_slice):
-    """Calculates the key AI prediction dates and confidence."""
+    """
+    Calculates the key AI prediction dates and confidence for a real-time stream.
+    The predicted failure date is a forecast: Current Time + Fixed Lead Time
+    """
 
     latest_confidence = df_slice["AI_Confidence_Score"].iloc[-1]
-
-    # 90%+ confidence is the critical prediction moment (Req 3)
-    critical_anomalies = df_slice[df_slice["AI_Confidence_Score"] >= 90.0]
-
+    
+    # The current moment in time for the simulation
+    current_time = df_slice.index[-1] 
+    
     anomaly_flag_date = None
     predicted_failure_date = None
+    days_left = 0
+    
+    # 90%+ confidence is the critical prediction moment (realistic action threshold)
+    if latest_confidence >= 90.0:
+        
+        # 1. Find the first time the AI confidence jumped over 90% in the entire slice
+        critical_anomalies = df_slice[df_slice["AI_Confidence_Score"] >= 90.0]
+        if not critical_anomalies.empty:
+            anomaly_flag_date = critical_anomalies.index[0]
+        else:
+            anomaly_flag_date = current_time # Fallback
 
-    # The ultimate failure date is the last point in the simulation data
-    ultimate_failure_date = full_data_df.index[-1]
+        # 2. Real-Time Forecasting: Calculate the Predicted Failure Date
+        # RUL (Remaining Useful Life) is simply added to the current time.
+        predicted_failure_date = current_time + timedelta(days=CONFIG["PREDICTED_LEAD_TIME_DAYS"])
+        
+        # 3. Days left until the predicted failure
+        days_left = CONFIG["PREDICTED_LEAD_TIME_DAYS"]
 
-    if not critical_anomalies.empty:
-        # Find the first time the AI confidence jumped over 90%
-        anomaly_flag_date = critical_anomalies.index[0]
-
-        # Estimate the predicted failure date: 15-30 days after the flag
-        # For the demo, we'll make the prediction 25 days after the flag
-        # The ultimate failure date will always be the last point of data
-        # Let's ensure the prediction is in the future relative to the current slice
-
-        days_to_predict = 25
-        # The difference between the ultimate failure and the anomaly flag time is the true lead time
-        time_diff_to_failure = ultimate_failure_date - anomaly_flag_date
-
-        # If the critical anomaly happened in the current slice, and we still have time left:
-        if anomaly_flag_date <= df_slice.index[-1]:
-            # The predicted failure date is the anomaly flag date + 25 days (simulated lead time)
-            # This makes the prediction actionable
-            predicted_failure_date = anomaly_flag_date + timedelta(days=days_to_predict)
-
-            # Ensure the displayed predicted failure date is always relative to the current time,
-            # and only shows if the anomaly flag has been hit.
-            if predicted_failure_date < df_slice.index[-1]:
-                # If the predicted date has already passed, use the ultimate failure date
-                predicted_failure_date = ultimate_failure_date
-
-    if predicted_failure_date is None:
-        # Default prediction window if no anomaly is found yet
-        predicted_failure_date = df_slice.index[-1] + timedelta(days=30)
-
-    # Days left until the predicted failure (from the current latest timestamp)
-    days_left = (predicted_failure_date - df_slice.index[-1]).days
+    else:
+        # If confidence is below 90%, we set a non-actionable, far-out date
+        predicted_failure_date = current_time + timedelta(days=90)
+        days_left = 90
 
     return latest_confidence, anomaly_flag_date, predicted_failure_date, days_left
 
@@ -267,11 +265,13 @@ def render_plant_manager_view(
 ):
     """Renders the financial and executive summary focused dashboard."""
 
-    st.subheader(f"Executive Summary for {CONFIG['ASSET_NAME']}")
+    st.header(f"Live Asset Monitor: {CONFIG['ASSET_NAME']}")
 
     # --- Financial and Prediction KPIs (Req 4) ---
     col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
 
+    is_critical_alert = latest_confidence >= 90
+    
     with col1:
         st.markdown('<div class="confidence-card">', unsafe_allow_html=True)
         st.markdown(f"**AI Failure Confidence** (0-100%)")
@@ -279,29 +279,39 @@ def render_plant_manager_view(
         st.progress(latest_confidence / 100)
         st.markdown("</div>", unsafe_allow_html=True)
 
+    
+    # --- Real-Time Predictive KPI ---
+    lead_time_display = f"{days_left} Days Lead Time"
+    
+    # The actionable Remaining Useful Life (RUL) only appears with high confidence
+    if is_critical_alert:
+        date_value_display = predicted_failure_date.strftime("%Y-%m-%d")
+    else:
+        date_value_display = "---"
+        lead_time_display = "System Normal"
+
+
     col2.metric(
-        label="Predicted Failure Date (Actionable)",
-        value=(
-            predicted_failure_date.strftime("%Y-%m-%d")
-            if days_left > 0
-            else "FAILURE IMMINENT"
-        ),
-        delta=f"{days_left} Days Lead Time" if days_left > 0 else None,
-        delta_color="inverse" if days_left > 15 else "normal",
+        label="Predicted Failure Date (Actionable RUL)",
+        value=date_value_display,
+        delta=lead_time_display,
+        delta_color="inverse" if is_critical_alert else "normal",
     )
 
     col3.metric(
         label="Expected Failures Preventable (Annual)",
         value=f"{CONFIG['DEFAULT_FAILURES_PREVENTED_PER_YEAR']} ",
     )
+    
+    status_text = (
+        "CRITICAL ALERT"
+        if is_critical_alert
+        else "WARNING (Degradation)" if latest_confidence >= 50 else "NORMAL"
+    )
     col4.metric(
         label="Asset Health Status",
-        value=(
-            "CRITICAL"
-            if latest_confidence >= 90
-            else "WARNING" if latest_confidence >= 50 else "NORMAL"
-        ),
-        delta="Immediate Attention Required" if latest_confidence >= 90 else None,
+        value=status_text,
+        delta="Action Required: Initiate Inspection" if is_critical_alert else None,
         delta_color="inverse",
     )
 
@@ -310,7 +320,7 @@ def render_plant_manager_view(
     # --- ROI Calculator (Req 4) ---
     st.header("Built-in ROI Calculator")
     st.write(
-        "Plug in your company's actual numbers to see the immediate financial justification."
+        "Use your company's actual numbers to see the immediate financial justification for this solution."
     )
 
     cost_col, failures_col, hours_col, savings_col = st.columns(4)
@@ -355,29 +365,22 @@ def render_plant_manager_view(
 
     st.info(
         f"**ROI Justification:** Based on these figures, the potential annual savings of R {annual_savings:,.0f} "
-        f"is **{roi_multiplier:.1f}x** the cost of a R{CONFIG['POC_COST']:,.0f} PoC. The solution quickly pays for itself."
+        f"is **{roi_multiplier:.1f}x** the cost of a R{CONFIG['POC_COST']:,.0f} Proof of Concept. The solution provides rapid return on investment."
     )
-
-    # --- Summary Data Table ---
-    with st.expander("Show Latest Sensor Readings"):
-        st.dataframe(
-            df_slice.iloc[-1:].reset_index().rename(columns={"index": "Timestamp"}),
-            use_container_width=True,
-        )
 
 
 def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
     """Renders the detailed sensor data and technical analysis focused dashboard."""
 
-    st.subheader(f"Detailed Technical Analysis for {CONFIG['ASSET_NAME']}")
+    st.header(f"Real-Time Diagnostics: {CONFIG['ASSET_NAME']}")
 
     # --- AI Confidence and Current Status ---
     col_status, col_conf = st.columns([2, 1])
 
     with col_status:
         st.markdown(
-            f"**Current Asset State:** {'Anomaly Detected' if latest_confidence >= 50 else 'Normal Operation'} "
-            f"| **Last Reading:** {df_slice.index[-1].strftime('%Y-%m-%d %H:%M')}"
+            f"**Current Operation State:** {'Anomaly Detected' if latest_confidence >= 50 else 'Normal Operation'} "
+            f"| **Last Data Point Received:** {df_slice.index[-1].strftime('%Y-%m-%d %H:%M')}"
         )
 
     with col_conf:
@@ -386,9 +389,9 @@ def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
     st.markdown("---")
 
     # --- Main Time-Series Charts (Req 2 & 3 - Anomaly Highlight) ---
-    st.header("Time-Series Data Stream (Vibration, Temp, Amperage)")
+    st.subheader("Live Data Feed (Vibration, Temp, Amperage)")
 
-    # We will only plot 3 data streams as requested (Vibration, Temperature, Amperage)
+    # We only plot the specified data streams
     df_to_plot = df_slice[["Vibration", "Temperature", "Amperage"]].copy()
 
     fig = px.line(
@@ -408,8 +411,7 @@ def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
     if anomaly_flag_date is not None and latest_confidence >= 90:
         fig.add_vrect(
             x0=anomaly_flag_date,
-            x1=anomaly_flag_date
-            + timedelta(hours=6),  # Highlight a few hours around the flag
+            x1=anomaly_flag_date + timedelta(hours=6),
             fillcolor=CONFIG["SECONDARY_COLOR"],
             opacity=0.3,
             line_width=0,
@@ -421,7 +423,7 @@ def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
             y=1.05,
             xref="x",
             yref="paper",
-            text="AI FIRST ANOMALY FLAG (90%+ CONFIDENCE)",
+            text="AI CRITICAL ANOMALY FLAG (90%+ CONFIDENCE)",
             showarrow=True,
             arrowhead=2,
             arrowcolor=CONFIG["SECONDARY_COLOR"],
@@ -435,27 +437,24 @@ def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
     st.plotly_chart(fig, use_container_width=True)
 
     # --- Detailed Anomaly Report ---
-    with st.expander("Detailed Anomaly Events and ML Scores"):
-        anomalies_to_show = df_slice[df_slice["AI_Confidence_Score"] >= 50].copy()
-        if anomalies_to_show.empty:
-            st.info("No high-confidence AI anomalies detected in this timeframe.")
-        else:
-            st.markdown(
-                "The table below shows all timestamps where the AI confidence surpassed 50%."
-            )
-            st.dataframe(
-                anomalies_to_show[
-                    [
-                        "Vibration",
-                        "Temperature",
-                        "Amperage",
-                        "ML_Anomaly_Score",
-                        "AI_Confidence_Score",
-                    ]
-                ].sort_index(ascending=False),
-                use_container_width=True,
-                height=300,
-            )
+    with st.expander("Show Latest Sensor Readings and ML Scores"):
+        st.markdown(
+            "The table below shows the latest readings and the confidence calculated by the Machine Learning model."
+        )
+        # Show only the last 20 rows to keep it manageable in a "live" view
+        st.dataframe(
+            df_slice.iloc[-20:].sort_index(ascending=False)[
+                [
+                    "Vibration",
+                    "Temperature",
+                    "Amperage",
+                    "ML_Anomaly_Score",
+                    "AI_Confidence_Score",
+                ]
+            ],
+            use_container_width=True,
+            height=300,
+        )
 
 
 # ==============================================================================
@@ -470,39 +469,55 @@ def main():
         )
         return
 
-    # --- Sidebar Controls (Req 1 & 2) ---
+    # --- Sidebar Controls ---
     with st.sidebar:
         st.title(CONFIG["LOGO_TEXT"])
-        st.markdown(f"**Asset:** {CONFIG['ASSET_NAME']}")
+        st.markdown(f"**Asset:** **{CONFIG['ASSET_NAME']}**")
         st.markdown(f"**Failure Mode:** {CONFIG['FAILURE_TYPE']}")
 
         st.markdown("---")
 
-        # Req 1: Role-Based View Selector
         user_role = st.selectbox(
             "Select User Role:", ("Plant Manager", "Technician"), key="user_role"
         )
 
         st.markdown("---")
+        st.subheader("Data Stream Control")
 
-        # Req 2: Dynamic Time-Series Data Simulation Control
-        total_data_points = len(full_data_df)
+        # --- REAL-TIME DATA STREAM SIMULATION CONTROL ---
         total_days = (full_data_df.index[-1] - full_data_df.index[0]).days
+        
+        # Ensure initial state is set to a reasonable starting point
+        if 'initial_load' not in st.session_state:
+            st.session_state.days_progressed = int(total_days * 0.5) # Start halfway for quicker demo
+            st.session_state.initial_load = True
 
-        days_to_failure = st.slider(
-            "Time Until Failure Simulation (Days)",
-            min_value=0,
+        # Slider linked to session state
+        st.session_state.days_progressed = st.slider(
+            "Simulated Data Progress (Days)",
+            min_value=1,
             max_value=total_days,
-            value=total_days,  # Start at the end (failure state)
+            value=st.session_state.days_progressed, 
             step=1,
-            key="days_until_failure",
-            help="Simulate asset degradation by moving this slider backward in time.",
+            key="_slider_control_",
+            help="Manually advance or rewind the data stream.",
         )
+        
+        # Play/Pause Controls
+        col_play, col_pause = st.columns(2)
+        
+        with col_play:
+            if st.button("▶️ Start Live Stream", use_container_width=True, disabled=st.session_state.playing):
+                st.session_state.playing = True
+        
+        with col_pause:
+            if st.button("⏸️ Pause Stream", use_container_width=True, disabled=not st.session_state.playing):
+                st.session_state.playing = False
 
-        # Calculate the end index for the data slice
-        end_date = full_data_df.index[0] + timedelta(days=days_to_failure)
+        # Calculate the end date based on the *progress* from the start
+        end_date = full_data_df.index[0] + timedelta(days=st.session_state.days_progressed)
 
-        # Slice the data up to the simulated end date
+        # Slice the data up to the simulated end date (this simulates the live stream)
         df_slice = full_data_df.loc[full_data_df.index <= end_date].copy()
 
         # Re-run ML processing on the slice
@@ -512,6 +527,35 @@ def main():
         latest_confidence, anomaly_flag_date, predicted_failure_date, days_left = (
             get_prediction_metrics(df_slice)
         )
+        
+        # Display Current Simulated Time
+        st.markdown("---")
+        st.info(
+            f"**Current System Time:** {df_slice.index[-1].strftime('%Y-%m-%d %H:%M')} "
+        )
+
+    # --- Real-Time Auto-Advance Logic (runs outside the sidebar) ---
+    if st.session_state.playing and st.session_state.days_progressed < total_days:
+        
+        # Show processing status to simulate a brief latency window
+        status_message = st.empty()
+        status_message.info(
+            f"**LIVE STREAMING:** Processing new data point for Day {st.session_state.days_progressed + 1}..."
+        )
+        
+        # Update state and trigger rerun
+        time.sleep(0.01) # Short delay for smooth animation
+        st.session_state.days_progressed += 1
+        
+        # Clear status and rerun the app loop
+        status_message.empty()
+        st.rerun()
+
+    # Handle simulation end condition
+    if st.session_state.days_progressed >= total_days and st.session_state.playing:
+        st.session_state.playing = False
+        st.sidebar.error("⚠️ **SIMULATION ENDED:** Failure event has occurred.")
+
 
     # --- Main Dashboard Rendering (Role Switch) ---
 
