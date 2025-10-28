@@ -9,59 +9,46 @@ import time
 import os
 
 # ==============================================================================
-# 1. CONFIGURATION AND STYLING
+# 0. CONFIGURATION AND STYLING
 # ==============================================================================
 CONFIG = {
-    # Req 5: Operational Flexibility - Asset Details
+    # Application & Branding
     "ASSET_NAME": "Kroonstad Maize Mill Pump #4",
-    "INDUSTRY": "Agricultural Processing",
     "FAILURE_TYPE": "Bearing Seizure (High Temp/Vibe)",
-    # Req 1: Branding and Theme
-    "PRIMARY_COLOR": "#0052CC",  # Blue - Professional and clean
-    "SECONDARY_COLOR": "#FFD700",  # Gold/Yellow - For alerts
-    "LOGO_TEXT": "S.I.L.K.E. AI",
+    "PRIMARY_COLOR": "#0052CC",  # Blue
+    "SECONDARY_COLOR": "#FFD700",  # Gold/Yellow
     "FONT_FAMILY": "Roboto, sans-serif",
-    # Req 4: ROI Calculator Defaults
+    # AI Prediction Logic Tuning
+    "SCORE_THRESHOLD_90_PERCENT": -0.15,  # Raw score that corresponds to 90% confidence
+    "MAX_NORMAL_SCORE": 0.05,  # Max score for 0% confidence
+    "PREDICTED_LEAD_TIME_DAYS": 25,  # Fixed lead time (RUL) when AI confidence is critical
+    # ROI Calculator Defaults
     "DEFAULT_DOWNTIME_COST_PER_HOUR": 50000,  # R50,000
     "DEFAULT_FAILURES_PREVENTED_PER_YEAR": 4,
     "ASSUMED_HOURS_SAVED_PER_FAILURE": 12,
-    "POC_COST": 50000,  # R50,000 PoC price
-    # Req 3: AI Prediction Logic Tuning (for IsolationForest score mapping)
-    "SCORE_THRESHOLD_90_PERCENT": -0.15,  # Score that corresponds to 90% confidence
-    "MAX_NORMAL_SCORE": 0.05,  # Max score for 0% confidence
-    # Real-time RUL/Lead Time: If AI is confident, predict failure in this many days
-    "PREDICTED_LEAD_TIME_DAYS": 25,
-    # New Config for Real-Time Loop
-    "UPDATE_INTERVAL_SECONDS": 1,  # Real-time speed set to 1 second per data point
+    "POC_COST": 50000,  # R50,000 PoC price for ROI calculation
 }
 
 st.set_page_config(
     layout="wide",
-    page_title=f"{CONFIG['LOGO_TEXT']} Predictive Maintenance Demo",
+    page_title=f"S.I.L.K.E. AI Predictive Maintenance Demo",
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for Professional Branding (Req 1)
+# Custom CSS for Professional Branding
 st.markdown(
     f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
-        
-        /* General Font */
         .stApp {{
             font-family: {CONFIG["FONT_FAMILY"]};
-            color: #1F2937; /* Dark Gray text */
+            color: #1F2937;
         }}
-        /* Main Header */
-        h1 {{
+        h1, h2, h3 {{
             color: {CONFIG["PRIMARY_COLOR"]};
-            font-weight: 700;
-            border-bottom: 2px solid #E5E7EB;
-            padding-bottom: 10px;
         }}
-        /* KPIs and Metrics */
         [data-testid="stMetricValue"] {{
-            font-size: 2.2rem;
+            font-size: 2.0rem;
             color: #111827;
         }}
         /* AI Confidence Gauge/Card */
@@ -73,226 +60,213 @@ st.markdown(
             border-left: 5px solid {CONFIG["PRIMARY_COLOR"]};
         }}
         .roi-value {{
-            font-size: 2.5rem;
+            font-size: 2.0rem;
             font-weight: 700;
-            color: #10B981; /* Green for savings */
+            color: #10B981;
             margin-top: 10px;
-        }}
-        /* Sidebar branding */
-        .sidebar .st-h2 {{
-            color: {CONFIG["PRIMARY_COLOR"]};
         }}
     </style>
 """,
     unsafe_allow_html=True,
 )
 
-# --- Session State Management for Live Mode ---
-if "days_progressed" not in st.session_state:
-    # Start the demo at the beginning
-    st.session_state.days_progressed = 1
-# Set 'playing' to True by default to auto-start the stream (as requested)
-if "playing" not in st.session_state:
-    st.session_state.playing = True
-if "initial_load" in st.session_state:
-    del st.session_state.initial_load
 
-
-# ==============================================================================
-# 2. DATA LOADING AND MODEL INITIALIZATION
-# ==============================================================================
-
-# User note: This uses the original data file, not a new generation process.
+# --- Configuration ---
+DATA_POINT_INTERVAL = 1.0
 file_path = "maize_mill_simulated_sensor_data.csv"
+
+
+# ==============================================================================
+# 1. LOAD DATA, INIT MODELS, AND HELPER FUNCTIONS
+# ==============================================================================
 
 
 @st.cache_data
 def load_data(file_path):
     """Loads and preprocesses the asset sensor data."""
     try:
-        # Load the CSV content
         if not os.path.exists(file_path):
-            st.error(
-                f"Error: Data file '{file_path}' not found. Please ensure the file is in the same directory."
-            )
+            st.error(f"Error: File not found at {file_path}. Please check the path.")
             st.stop()
 
         df = pd.read_csv(file_path, parse_dates=["Timestamp"])
+        required_columns = [
+            "Timestamp",
+            "Power_kW",
+            "Amperage",
+            "Vibration",
+            "Temperature",
+        ]
+        if not all(col in df.columns for col in required_columns):
+            st.error("Error: The CSV file is missing one of the required columns.")
+            st.stop()
+
         df = df.set_index("Timestamp").sort_index()
 
-        # Add initial required columns for processing
-        df["Is_ML_Anomaly"] = False
-        df["ML_Anomaly_Score"] = 0.0
-        df["AI_Confidence_Score"] = 0.0
+        # Add rolling stats for rule-based analysis (as per original code)
+        window_size = "12h"
+        df["Power_kW_RollingMean"] = df["Power_kW"].rolling(window=window_size).mean()
+        df["Power_kW_RollingStd"] = df["Power_kW"].rolling(window=window_size).std()
+        df["Amperage_RollingMean"] = df["Amperage"].rolling(window=window_size).mean()
+        df["Amperage_RollingStd"] = df["Amperage"].rolling(window=window_size).std()
 
         return df
     except Exception as e:
-        st.error(f"Error loading or processing data from CSV: {e}")
+        st.error(f"Error loading data: {e}")
         st.stop()
 
 
 @st.cache_resource
 def train_isolation_forest(df_initial):
     """Trains the Isolation Forest model on initial, healthy data."""
-    # We train on the first 1000 data points assuming they represent 'normal' operation
-    df_train = df_initial.head(1000).copy()
-
-    features_for_ml = ["Power_kW", "Amperage", "Vibration", "Temperature"]
-    X_train = df_train[features_for_ml].dropna()
-
-    if X_train.empty or len(X_train) < 100:
+    if df_initial.empty:
         return None, None
 
-    # Use auto contamination to be safe, or a defined value (0.01 is fine)
+    features_for_ml = ["Power_kW", "Amperage", "Vibration", "Temperature"]
+    # Training on the first 1000 rows, assuming initial normal operation
+    X_train = df_initial.head(1000)[features_for_ml].dropna()
+
+    if X_train.empty or len(X_train) < 100:
+        st.warning("Not enough data to train the ML model.")
+        return None, None
+
     model = IsolationForest(contamination=0.01, random_state=42)
     model.fit(X_train.values)
     return model, features_for_ml
 
 
 # Global data and model initialization
+full_data_df = load_data(file_path)
+
 try:
-    full_data_df = load_data(file_path)
-    if full_data_df.empty:
-        st.error("The loaded data frame is empty. Cannot run the simulation.")
-        st.stop()
     iso_forest_model, ml_features = train_isolation_forest(full_data_df)
-    if iso_forest_model is None:
-        st.error("ML Model could not be trained. Not enough training data.")
-        st.stop()
-except:
-    pass
+except Exception as e:
+    st.error(f"An error occurred during model training: {e}")
+    st.stop()
 
-
-# ==============================================================================
-# 3. CORE PREDICTION AND ANOMALY LOGIC
-# ==============================================================================
+if iso_forest_model is None:
+    st.warning("ML functionality will be disabled due to model training failure.")
 
 
 def calculate_ml_confidence(raw_score):
-    """
-    Scales the raw Isolation Forest score to a 0-100 AI Confidence Score.
-    Lower (more negative) raw scores mean higher anomaly confidence.
-    """
-    if iso_forest_model is None:
-        return 0.0
-
-    # Linear scaling: Map MAX_NORMAL_SCORE to 0% and SCORE_THRESHOLD_90_PERCENT to 90%
+    """Scales the raw Isolation Forest score to a 0-100 AI Confidence Score."""
     score_range = CONFIG["MAX_NORMAL_SCORE"] - CONFIG["SCORE_THRESHOLD_90_PERCENT"]
 
     if raw_score >= CONFIG["MAX_NORMAL_SCORE"]:
         confidence = 0.0
     else:
-        # Distance from the 'normal' threshold
         distance_from_normal = CONFIG["MAX_NORMAL_SCORE"] - raw_score
-
-        # Calculate a factor based on how far we are into the anomaly range
         factor = distance_from_normal / score_range
-
-        # Scale factor to 100, capping at 100
-        confidence = min(100.0, factor * 90.0)  # 90 is the confidence at the threshold
+        confidence = min(100.0, factor * 90.0)
 
     return round(confidence, 1)
 
 
-def process_data_slice(df_slice, model, features):
-    """Applies ML prediction and calculates confidence for an entire data slice."""
-
-    # Check for anomalies using the ML model
-    if model is not None and not df_slice.empty:
-        # Check if any data point has a null value in the feature columns
-        last_row = df_slice.iloc[[-1]]
-        if last_row[features].isnull().any().any():
-            # If the last row has a missing value, we cannot predict the score, use previous
-            return df_slice
-
-        X = df_slice[features].values
-
-        # Get raw scores
-        raw_scores = model.decision_function(X)
-        df_slice.loc[:, "ML_Anomaly_Score"] = raw_scores
-
-        # Determine if it's an anomaly (-1) or normal (1)
-        ml_predictions = model.predict(X)
-        df_slice.loc[:, "Is_ML_Anomaly"] = ml_predictions == -1
-
-        # Calculate the confidence score based on the raw score
-        df_slice.loc[:, "AI_Confidence_Score"] = df_slice["ML_Anomaly_Score"].apply(
-            calculate_ml_confidence
-        )
-
-    return df_slice
-
-
 def get_prediction_metrics(df_slice):
-    """
-    Calculates the key AI prediction dates and confidence for a real-time stream.
-    The predicted failure date is a forecast: Current Time + Fixed Lead Time
-    """
+    """Calculates the key AI prediction dates, confidence, and RUL."""
     if df_slice.empty:
-        return 0.0, None, datetime.now(), 0
+        return 0.0, None, datetime.now(), 90
 
-    latest_confidence = df_slice["AI_Confidence_Score"].iloc[-1]
-
-    # The current moment in time for the simulation
+    latest_score = df_slice["ML_Anomaly_Score"].iloc[-1]
+    latest_confidence = calculate_ml_confidence(latest_score)
     current_time = df_slice.index[-1]
 
-    anomaly_flag_date = None
-    predicted_failure_date = None
-    days_left = 0
+    predicted_failure_date = current_time + timedelta(days=90)
+    days_left = 90
 
-    # 90%+ confidence is the critical prediction moment (realistic action threshold)
+    # 90%+ confidence is the critical prediction moment (actionable RUL)
     if latest_confidence >= 90.0:
-
-        # 1. Find the first time the AI confidence jumped over 90% in the entire slice
-        critical_anomalies = df_slice[df_slice["AI_Confidence_Score"] >= 90.0]
-        if not critical_anomalies.empty:
-            anomaly_flag_date = critical_anomalies.index[0]
-        else:
-            anomaly_flag_date = current_time  # Fallback
-
-        # 2. Real-Time Forecasting: Calculate the Predicted Failure Date
         predicted_failure_date = current_time + timedelta(
             days=CONFIG["PREDICTED_LEAD_TIME_DAYS"]
         )
-
-        # 3. Days left until the predicted failure
         days_left = CONFIG["PREDICTED_LEAD_TIME_DAYS"]
 
-    else:
-        # If confidence is below 90%, we set a non-actionable, far-out date
-        predicted_failure_date = current_time + timedelta(days=90)
-        days_left = 90
-
-    return latest_confidence, anomaly_flag_date, predicted_failure_date, days_left
-
-
-# ==============================================================================
-# 4. ROI CALCULATOR LOGIC
-# ==============================================================================
+    return latest_confidence, predicted_failure_date, days_left
 
 
 def calculate_roi(downtime_cost, failures_prevented, hours_saved):
-    """Calculates potential annual savings."""
+    """Calculates potential annual savings and ROI multiplier."""
     annual_savings = (downtime_cost * hours_saved) * failures_prevented
-    roi_multiplier = annual_savings / CONFIG["POC_COST"]
+    # Handle division by zero if POC cost is set to 0
+    roi_multiplier = annual_savings / CONFIG["POC_COST"] if CONFIG["POC_COST"] else 0
     return annual_savings, roi_multiplier
 
 
 # ==============================================================================
-# 5. UI RENDERING FUNCTIONS (Role-Based Views)
+# 2. ANOMALY DETECTION AND DATA PROCESSING
+# (Keeping rule and ML checks consistent with original code)
 # ==============================================================================
 
 
-def render_plant_manager_view(
-    df_slice, latest_confidence, predicted_failure_date, days_left
-):
+def check_rule_based_anomalies(row):
+    """Applies rule-based anomaly detection to a single data row."""
+    # ... (content remains the same as in the original code)
+    rule_power_threshold = 600
+    rule_temp_threshold = 70.0
+    rule_vibration_threshold = 6.5
+    rule_temp_gradual_threshold = 75.0
+
+    anomaly_rule_1 = (row["Power_kW"] > rule_power_threshold) and (
+        row["Temperature"] > rule_temp_threshold
+    )
+
+    try:
+        if not pd.isna(row["Power_kW_RollingMean"]):
+            rolling_mean = row["Power_kW_RollingMean"]
+            rolling_std = row["Power_kW_RollingStd"]
+            rolling_mean_amp = row["Amperage_RollingMean"]
+            rolling_std_amp = row["Amperage_RollingStd"]
+
+            anomaly_rule_2 = (row["Power_kW"] > (rolling_mean + 3 * rolling_std)) or (
+                row["Amperage"] > (rolling_mean_amp + 3 * rolling_std_amp)
+            )
+        else:
+            anomaly_rule_2 = False
+    except KeyError:
+        anomaly_rule_2 = False
+
+    anomaly_rule_3 = (row["Vibration"] > rule_vibration_threshold) and (
+        row["Temperature"] > rule_temp_gradual_threshold
+    )
+
+    is_rule_anomaly = anomaly_rule_1 or anomaly_rule_2 or anomaly_rule_3
+    reasoning = ""
+    if anomaly_rule_1:
+        reasoning += "High Power & Temp: Potential inefficiency/overload. "
+    if anomaly_rule_2:
+        reasoning += "Sudden Power/Amp Spike. "
+    if anomaly_rule_3:
+        reasoning += "Gradual Vibe/Temp Increase: Possible mechanical wear. "
+
+    return is_rule_anomaly, reasoning.strip()
+
+
+def check_ml_anomaly(row, model, features):
+    """Applies the Isolation Forest model to a single data row."""
+    if model is None or features is None or any(pd.isna(row[features])):
+        return False, 0.0
+
+    data_point = np.array([row[features].values])
+    ml_prediction = model.predict(data_point)[0]
+    ml_score = model.decision_function(data_point)[0]
+    is_ml_anomaly = ml_prediction == -1
+
+    return is_ml_anomaly, ml_score
+
+
+# ==============================================================================
+# 3. ROLE-BASED VIEW RENDERING
+# ==============================================================================
+
+
+def render_plant_manager_view(latest_confidence, predicted_failure_date, days_left):
     """Renders the financial and executive summary focused dashboard."""
     st.header(f"Live Asset Monitor: {CONFIG['ASSET_NAME']} (Plant Manager View)")
 
-    # --- Financial and Prediction KPIs (Req 4) ---
-    col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
-
     is_critical_alert = latest_confidence >= 90
+
+    # --- Financial and Prediction KPIs ---
+    col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1])
 
     with col1:
         st.markdown('<div class="confidence-card">', unsafe_allow_html=True)
@@ -301,45 +275,43 @@ def render_plant_manager_view(
         st.progress(latest_confidence / 100)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Real-Time Predictive KPI (Actionable RUL) ---
-    lead_time_display = f"{days_left} Days Lead Time"
+    with col2:
+        date_value_display = (
+            predicted_failure_date.strftime("%Y-%m-%d") if is_critical_alert else "---"
+        )
+        lead_time_display = (
+            f"{days_left} Days Lead Time" if is_critical_alert else "System Normal"
+        )
+        delta_color = "inverse" if is_critical_alert else "normal"
 
-    if is_critical_alert:
-        date_value_display = predicted_failure_date.strftime("%Y-%m-%d")
-        delta_color = "inverse"
-    else:
-        date_value_display = "---"
-        lead_time_display = "System Normal"
-        delta_color = "normal"
-
-    col2.metric(
-        label="Predicted Failure Date (Actionable RUL)",
-        value=date_value_display,
-        delta=lead_time_display,
-        delta_color=delta_color,
-    )
-
-    col3.metric(
-        label="Expected Failures Preventable (Annual)",
-        value=f"{CONFIG['DEFAULT_FAILURES_PREVENTED_PER_YEAR']} ",
-    )
+        col2.metric(
+            label="Predicted Failure Date (Actionable RUL)",
+            value=date_value_display,
+            delta=lead_time_display,
+            delta_color=delta_color,
+        )
 
     status_text = (
         "CRITICAL ALERT"
         if is_critical_alert
         else "WARNING (Degradation)" if latest_confidence >= 50 else "NORMAL"
     )
-    col4.metric(
+    col3.metric(
         label="Asset Health Status",
         value=status_text,
         delta="Action Required: Initiate Inspection" if is_critical_alert else None,
         delta_color="inverse",
     )
 
+    col4.metric(
+        label="Expected Failures Preventable (Annual)",
+        value=f"{CONFIG['DEFAULT_FAILURES_PREVENTED_PER_YEAR']} ",
+    )
+
     st.markdown("---")
 
-    # --- ROI Calculator (Req 4) ---
-    st.header("Built-in ROI Calculator")
+    # --- Built-in ROI Calculator ---
+    st.subheader("Built-in ROI Calculator")
 
     cost_col, failures_col, hours_col, savings_col = st.columns(4)
 
@@ -350,7 +322,7 @@ def render_plant_manager_view(
             value=CONFIG["DEFAULT_DOWNTIME_COST_PER_HOUR"],
             step=5000,
             format="%d",
-            key="cost_input_pm",
+            key="cost_input",
         )
 
     with failures_col:
@@ -360,7 +332,7 @@ def render_plant_manager_view(
             value=CONFIG["DEFAULT_FAILURES_PREVENTED_PER_YEAR"],
             step=1,
             format="%d",
-            key="failures_input_pm",
+            key="failures_input",
         )
 
     with hours_col:
@@ -370,7 +342,7 @@ def render_plant_manager_view(
             value=CONFIG["ASSUMED_HOURS_SAVED_PER_FAILURE"],
             step=1,
             format="%d",
-            key="hours_input_pm",
+            key="hours_input",
         )
 
     annual_savings, roi_multiplier = calculate_roi(
@@ -384,200 +356,214 @@ def render_plant_manager_view(
             unsafe_allow_html=True,
         )
 
-    st.info(
-        f"**ROI Justification:** The potential annual savings is **{roi_multiplier:.1f}x** the Proof of Concept cost."
+    st.success(
+        f"**ROI Justification:** The potential annual savings is **{roi_multiplier:.1f}x** the Proof of Concept cost (R {CONFIG['POC_COST']:,.0f})."
     )
 
 
-def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
-    """
-    Renders the detailed sensor data and technical analysis focused dashboard.
-    This layout is simplified to match the requested "original dashboard" look.
-    """
-    st.header(f"Real-Time Diagnostics: {CONFIG['ASSET_NAME']} (Technician View)")
+def render_technician_view(
+    kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, latest_confidence
+):
+    """Renders the detailed sensor data and technical analysis dashboard."""
 
-    # --- Current Status Bar (Concise, technical view - simulating original look) ---
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        st.metric(
+    # --- KPI Section (Now includes AI Confidence) ---
+    with kpi_ph.container():
+        st.header(f"Real-Time Diagnostics: {CONFIG['ASSET_NAME']} (Technician View)")
+        col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
+
+        col_kpi1.metric("Latest Power (kW)", f"{current_df.iloc[-1]['Power_kW']:.2f}")
+        col_kpi2.metric("Latest Vibration", f"{current_df.iloc[-1]['Vibration']:.2f}")
+        col_kpi3.metric("Latest Temp (°C)", f"{current_df.iloc[-1]['Temperature']:.2f}")
+        col_kpi4.metric(
             "AI Confidence",
             f"{latest_confidence:.1f}%",
-            help="Confidence that the asset is exhibiting anomalous behavior.",
+            help="Confidence of anomaly detection.",
         )
-
-    with col2:
-        current_time_display = df_slice.index[-1].strftime("%Y-%m-%d %H:%M:%S")
-        status_display = (
-            "CRITICAL ANOMALY DETECTED"
-            if latest_confidence >= 90
-            else (
-                "Warning (Degradation)"
-                if latest_confidence >= 50
-                else "Normal Operation"
-            )
-        )
-
-        # Custom HTML for a clean status block
-        st.markdown(
-            f"""
-            <div style="background-color: #F9FAFB; padding: 10px; border-radius: 8px; border: 1px solid #E5E7EB;">
-                <p style="margin: 0; font-size: 0.9rem; color: #6B7280;">Last Data Point Time</p>
-                <p style="margin: 0; font-weight: bold; font-size: 1.1rem;">{current_time_display}</p>
-                <p style="margin: 5px 0 0 0; font-size: 0.9rem; color: #6B7280;">Operation State</p>
-                <p style="margin: 0; font-weight: bold; color: {'#EF4444' if latest_confidence >= 50 else '#10B981'}; font-size: 1.1rem;">{status_display}</p>
-            </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        col_kpi5.metric("Total Anomalies", anomaly_count)
 
     st.markdown("---")
 
-    # --- Main Time-Series Charts (Sensor Data Streams) ---
-    st.subheader("Real-time Sensor Data Monitoring")
+    # --- Alerts and Anomaly Reporting (Kept original logic) ---
+    with alert_ph.container():
+        if anomaly_count > 0:
+            last_anomaly = current_df[
+                current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
+            ].iloc[-1]
+            st.error(
+                f"⚠️ Anomaly Detected at {last_anomaly.name.strftime('%Y-%m-%d %H:%M:%S')}!"
+            )
+            st.markdown(
+                f"**Reasoning:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
+            )
 
-    # Plotting the three primary variables (Power_kW, Vibration, Temperature)
-    df_to_plot = df_slice[["Power_kW", "Vibration", "Temperature"]].copy()
-
-    fig = px.line(
-        df_to_plot,
-        y=["Power_kW", "Vibration", "Temperature"],
-        labels={"value": "Sensor Reading", "Timestamp": "Time"},
-        title=f"Live Sensor Data Stream | Confidence: {latest_confidence:.1f}%",
-        height=600,
-        color_discrete_map={
-            "Power_kW": CONFIG["PRIMARY_COLOR"],
-            "Vibration": "#EF4444",  # Red
-            "Temperature": "#FBBF24",  # Amber
-        },
-    )
-
-    # Anomaly Highlight for critical confidence
-    if anomaly_flag_date is not None and latest_confidence >= 90:
-        fig.add_vrect(
-            x0=anomaly_flag_date,
-            x1=anomaly_flag_date + timedelta(hours=6),
-            fillcolor=CONFIG["SECONDARY_COLOR"],
-            opacity=0.3,
-            line_width=0,
-            layer="below",
-            name="AI Anomaly Flag",
-        )
-        fig.add_annotation(
-            x=anomaly_flag_date,
-            y=1.05,
-            xref="x",
-            yref="paper",
-            text="AI CRITICAL ANOMALY FLAG (90%+ CONFIDENCE)",
-            showarrow=True,
-            arrowhead=2,
-            arrowcolor=CONFIG["SECONDARY_COLOR"],
-            font=dict(
-                color=CONFIG["SECONDARY_COLOR"], size=12, family=CONFIG["FONT_FAMILY"]
-            ),
-            xshift=-10,
-        )
-
-    fig.update_layout(hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- Detailed Anomaly Report (Kept as useful utility) ---
-    with st.expander("Show Latest Sensor Readings and ML Scores"):
-        st.markdown(
-            "The table below shows the latest readings and the confidence calculated by the Machine Learning model."
-        )
-        # Show only the last 20 rows to keep it manageable in a "live" view
-        st.dataframe(
-            df_slice.iloc[-20:].sort_index(ascending=False)[
-                [
-                    "Power_kW",
-                    "Vibration",
-                    "Temperature",
-                    "ML_Anomaly_Score",
-                    "AI_Confidence_Score",
+            with st.expander("Show Detailed Anomaly Report"):
+                anomalies_to_show = current_df[
+                    current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
                 ]
-            ],
+                st.dataframe(
+                    anomalies_to_show[
+                        [
+                            "Power_kW",
+                            "Vibration",
+                            "Temperature",
+                            "ML_Anomaly_Score",
+                            "Anomaly_Reasoning",
+                            "Is_ML_Anomaly",
+                        ]
+                    ].sort_index(ascending=False),
+                    use_container_width=True,
+                    height=300,
+                )
+
+                # Original Anomaly Chart
+                if not anomalies_to_show.empty:
+                    last_anomaly_time = last_anomaly.name
+                    df_anomaly_window = current_df.loc[
+                        (current_df.index >= last_anomaly_time - pd.Timedelta(hours=2))
+                        & (
+                            current_df.index
+                            <= last_anomaly_time + pd.Timedelta(hours=2)
+                        )
+                    ]
+
+                    fig_anomaly = px.line(
+                        df_anomaly_window,
+                        y=["Power_kW", "Vibration", "Temperature"],
+                        title=f"Sensor Readings Around Anomaly at {last_anomaly_time.strftime('%Y-%m-%d %H:%M:%S')}",
+                    )
+                    st.plotly_chart(fig_anomaly, use_container_width=True)
+
+        else:
+            st.success("✅ System Operating Normally.")
+
+    # --- Main Chart (Kept original logic) ---
+    with chart_ph.container():
+        st.subheader("Real-time Sensor Data Monitoring")
+        fig_main = px.line(
+            current_df,
+            x=current_df.index,
+            y=["Power_kW", "Vibration", "Temperature"],
+            labels={"value": "Value", "Timestamp": "Time"},
+            title="Live Sensor Data Stream",
+        )
+        fig_main.update_layout(height=500, xaxis_title="Timestamp")
+        st.plotly_chart(
+            fig_main,
             use_container_width=True,
-            height=300,
+            key=f"main_chart_{st.session_state.current_row_index}",
         )
 
 
 # ==============================================================================
-# 6. MAIN APP EXECUTION FLOW (Uses st.rerun for non-blocking stream)
+# 4. MAIN EXECUTION AND STREAMING LOOP
 # ==============================================================================
 
+st.title("S.I.L.K.E Predictive Maintenance Demo")
 
-def main():
-    if full_data_df.empty or iso_forest_model is None:
-        return
+# --- Sidebar Controls ---
+with st.sidebar:
+    st.header("Asset Details")
+    st.markdown(f"**Asset:** **{CONFIG['ASSET_NAME']}**")
+    st.markdown(f"**Failure Mode:** {CONFIG['FAILURE_TYPE']}")
 
-    # Calculate total days in data for slider max
-    total_days = (full_data_df.index[-1] - full_data_df.index[0]).days
+    st.markdown("---")
 
-    # Ensure slider is capped at max days
-    if st.session_state.days_progressed > total_days:
-        st.session_state.days_progressed = total_days
-
-    # --- Sidebar Controls ---
-    with st.sidebar:
-        st.title(CONFIG["LOGO_TEXT"])
-        st.markdown(f"**Asset:** **{CONFIG['ASSET_NAME']}**")
-        st.markdown(f"**Failure Mode:** {CONFIG['FAILURE_TYPE']}")
-
-        st.markdown("---")
-
-        # Role Selector (Required feature)
-        user_role = st.selectbox(
-            "Select User Role:", ("Plant Manager", "Technician"), key="user_role"
-        )
-
-        st.markdown("---")
-        # New info block replacing the stream controls
-        current_time_display = full_data_df.index[0] + timedelta(
-            days=st.session_state.days_progressed
-        )
-        st.info(
-            f"**Live Stream Time:** {current_time_display.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-
-    # --- 1. CORE DATA PROCESSING ---
-    end_date = full_data_df.index[0] + timedelta(days=st.session_state.days_progressed)
-    df_slice = full_data_df.loc[full_data_df.index <= end_date].copy()
-
-    # Process the data slice to get ML metrics (AI Confidence Score Calculation)
-    df_slice = process_data_slice(df_slice, iso_forest_model, ml_features)
-    latest_confidence, anomaly_flag_date, predicted_failure_date, days_left = (
-        get_prediction_metrics(df_slice)
+    # NEW: Role Selector Switch
+    user_role = st.selectbox(
+        "Select User Role:", ("Plant Manager", "Technician"), key="user_role"
     )
 
-    # NOTE for User: These metrics are derived directly from the 'df_slice',
-    # ensuring the Plant Manager View is calculated from the same live data stream
-    # as displayed in the Technician View. This confirms the requested behavior is possible.
+    st.markdown("---")
+    st.header("The Value Proposition")
+    st.markdown(
+        """
+    Our solution helps you shift from reactive to proactive maintenance by providing:
+    - **Predictive Maintenance & Uptime:** AI predicts anomalies, reducing unexpected downtime.
+    - **Actionable Intelligence:** Turns complex data into informed financial and operational decisions.
+    """
+    )
 
-    # --- 2. RENDER DASHBOARD BASED ON ROLE ---
-    if user_role == "Plant Manager":
-        render_plant_manager_view(
-            df_slice, latest_confidence, predicted_failure_date, days_left
+
+# --- Session State Initialization ---
+if "current_df" not in st.session_state:
+    initial_row = full_data_df.head(1).copy()
+    initial_row["Is_Rule_Anomaly"] = False
+    initial_row["Is_ML_Anomaly"] = False
+    initial_row["Anomaly_Reasoning"] = ""
+    initial_row["ML_Anomaly_Score"] = 0.0
+    st.session_state.current_df = initial_row
+    st.session_state.current_row_index = 1
+    st.session_state.anomaly_count = 0
+
+# Create empty placeholders for all dynamic UI elements
+# These placeholders are needed for the while loop to correctly update the UI
+kpi_placeholder = st.empty()
+alert_placeholder = st.empty()
+chart_placeholder = st.empty()
+
+
+# The continuous simulation loop
+while st.session_state.current_row_index < len(full_data_df):
+    try:
+        # 1. Get next data row
+        next_row = full_data_df.iloc[
+            st.session_state.current_row_index : st.session_state.current_row_index + 1
+        ].copy()
+
+        # 2. Perform anomaly checks
+        is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(next_row.iloc[0])
+        is_ml_anomaly, ml_score = check_ml_anomaly(
+            next_row.iloc[0], iso_forest_model, ml_features
         )
-    elif user_role == "Technician":
-        render_technician_view(df_slice, latest_confidence, anomaly_flag_date)
 
-    # --- 3. AUTO-ADVANCE LOGIC (Automatic Live Stream Implementation) ---
-    # The simulation runs automatically until the end of the data is reached.
+        # 3. Augment data row with results
+        next_row.loc[:, "Is_Rule_Anomaly"] = is_rule_anomaly
+        next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
+        next_row.loc[:, "Anomaly_Reasoning"] = rule_reasoning
+        next_row.loc[:, "ML_Anomaly_Score"] = ml_score
 
-    # Check for end condition first
-    if st.session_state.days_progressed >= total_days:
-        st.sidebar.error("⚠️ **SIMULATION ENDED:** Failure event has occurred.")
-        return
+        # 4. Update session state
+        st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
+        st.session_state.current_row_index += 1
 
-    # 1. Increment Data Stream for the NEXT run
-    st.session_state.days_progressed += 1
+        if is_rule_anomaly or is_ml_anomaly:
+            st.session_state.anomaly_count += 1
 
-    # 2. Wait for the specified interval (non-blocking)
-    time.sleep(CONFIG["UPDATE_INTERVAL_SECONDS"])
+        # 5. Calculate global prediction metrics based on the latest data point
+        latest_confidence, predicted_failure_date, days_left = get_prediction_metrics(
+            st.session_state.current_df
+        )
 
-    # 3. Tell Streamlit to re-execute the script from the top
-    st.rerun()
+        # 6. Call the appropriate rendering function based on the user's role
+        # We clear all placeholders at the start to ensure clean rendering for the selected view
+        kpi_placeholder.empty()
+        alert_placeholder.empty()
+        chart_placeholder.empty()
 
+        if user_role == "Plant Manager":
+            render_plant_manager_view(
+                latest_confidence, predicted_failure_date, days_left
+            )
+        elif user_role == "Technician":
+            render_technician_view(
+                kpi_placeholder,
+                alert_placeholder,
+                chart_placeholder,
+                st.session_state.current_df,
+                st.session_state.anomaly_count,
+                latest_confidence,
+            )
 
-if __name__ == "__main__":
-    main()
+        # 7. Pause for a moment to simulate real-time stream
+        time.sleep(DATA_POINT_INTERVAL)
+
+    except Exception as e:
+        st.error(
+            f"⚠️ Error: The simulation crashed while processing row {st.session_state.current_row_index}."
+        )
+        st.error(f"**Details:** {e}")
+        st.stop()
+
+# Final status message after the loop
+if st.session_state.current_row_index >= len(full_data_df):
+    st.info("End of simulation. All data has been processed.")
