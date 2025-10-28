@@ -549,21 +549,16 @@ def main():
     # --- Real-Time Auto-Advance Logic (runs outside the sidebar) ---
     if st.session_state.playing and st.session_state.days_progressed < total_days:
 
-        # Show processing status to simulate a brief latency window
-        status_message = st.empty()
+        # Use st.spinner() to show loading status in the top right while sleeping,
+        # which is much less disruptive than using st.empty/st.info in the main body.
+        with st.spinner(
+            f"LIVE STREAMING: Processing next data batch (Day {st.session_state.days_progressed + 1})..."
+        ):
+            # Pause execution for 6 seconds to simulate data ingestion/analysis latency
+            time.sleep(6)
 
-        # *** KEY CHANGE: Increased sleep time to 6 seconds for better visualization ***
-        time.sleep(6)
-
-        status_message.info(
-            f"**LIVE STREAMING:** Processing new data point for Day {st.session_state.days_progressed + 1}..."
-        )
-
-        # Update state and trigger rerun
+        # Update state and trigger rerun to display the new data
         st.session_state.days_progressed += 1
-
-        # Clear status and rerun the app loop
-        status_message.empty()
         st.rerun()
 
     # Handle simulation end condition
