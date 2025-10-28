@@ -8,19 +8,25 @@ import time
 import os
 
 # --- Configuration ---
-st.set_page_config(layout="wide", page_title="S.I.L.K.E AI Predictive Maintenance Demo")
+st.set_page_config(layout="wide", page_title="S.I.L.K.E. AI: Smart Maize Mill PdM")
 
-DATA_POINT_INTERVAL = 0.5  # Increased speed for better demo flow
+DATA_POINT_INTERVAL = 0.5
 file_path = "maize_mill_simulated_sensor_data.csv"
+
+# --- NEW: Branding and Currency ---
+LOGO_TEXT = "S.I.L.K.E. AI"
+INDUSTRY_TITLE = "Smart Maize Mill Grinding Line"  # Suggestion
+CURRENCY_SYMBOL = "R"  # South African Rand
+CURRENCY_FORMAT = "R {:,.0f}"
 
 # --- Placeholder for industry-specific failure/cost data (for ROI calculation) ---
 FAILURE_COST_DATA = {
-    "Average Downtime Cost per Hour ($)": 15000,
-    "Time Saved by PdM (Hours)": 4,  # Estimated hours saved vs reactive
-    "Avg. Repair Cost (Reactive $)": 50000,
-    "Avg. Repair Cost (Predictive $)": 10000,  # Cheaper repair before catastrophic failure
+    "Average Downtime Cost per Hour (R)": 250000,  # Approx $15,000 * 16.6 ZAR/USD
+    "Time Saved by PdM (Hours)": 4,
+    "Avg. Repair Cost (Reactive R)": 800000,  # Catastrophic failure
+    "Avg. Repair Cost (Predictive R)": 150000,  # Planned repair
     "Equipment Lifespan (Years)": 10,
-    "PdM System Annual Cost ($)": 25000,
+    "PdM System Annual Cost (R)": 400000,
 }
 
 
@@ -84,7 +90,6 @@ def train_isolation_forest(df_initial):
     X_train = df_initial[features_for_ml].dropna()
     if X_train.empty or len(X_train) < 2:
         return None, None
-    # Increased contamination slightly for more frequent demo alerts
     model = IsolationForest(contamination=0.015, random_state=42)
     model.fit(X_train.values)
     return model, features_for_ml
@@ -149,51 +154,39 @@ def check_rule_based_anomalies(row):
 def check_ml_anomaly(row, model, features):
     """Applies the Isolation Forest model to a single data row."""
     if model is None or features is None or any(pd.isna(row[features])):
-        # Return False, a neutral score, and 0% confidence
-        return False, 0.0, 0.0
+        return False, 0.0, 0.0, 0
 
     data_point = np.array([row[features].values])
     ml_prediction = model.predict(data_point)[0]
     ml_score = model.decision_function(data_point)[0]
     is_ml_anomaly = ml_prediction == -1
 
-    # NEW: Calculate a proxy for AI Confidence
-    # Isolation Forest score is the negative distance to the boundary.
-    # A smaller, less negative score means closer to the 'normal' boundary (less confident in anomaly).
-    # A larger negative score means deeper into the anomaly region (more confident in anomaly).
-    # Confidence in 'Anomaly' is inversely related to the score's magnitude, but we need a 0-100 scale.
-    # Use a sigmoid or simple scaling for a proxy RUL and Confidence.
+    # Calculate a proxy for AI Confidence and RUL
 
-    # Confidence in ANOMALY (0% to 100%)
-    # ml_score is typically between -0.3 and 0.3. Let's map it.
+    # 1. AI Confidence in ANOMALY (0% to 100%)
     if is_ml_anomaly:
-        # For anomalies (negative score), map deeper negative to higher confidence.
-        # Example: map -0.3 to 100%, 0.0 to 50% (threshold for detection)
-        # We can use a simplified linear map for demo purposes:
-        max_negative_score = -0.1  # Assume this is the 'most anomalous' observed
-        confidence = min(
-            100, max(50, 50 - (ml_score * 500))
-        )  # Starts at 50% at threshold (0.0 score)
+        # Map score from 0.0 (just detected) to -0.3 (deep anomaly) -> 50% to 100%
+        # ml_score is typically between -0.3 and 0.3.
+        # Simple linear map: Confidence = 50 - (ml_score * 500)
+        confidence = min(100, max(50, 50 - (ml_score * 500)))
     else:
-        # For normal points (positive score), confidence in 'Normal' is higher for higher score.
+        # For normal points, confidence in 'Normal' is higher for higher score (closer to 0.3)
         confidence = 100 - (abs(ml_score) * 200)  # Simple inverse mapping
         confidence = max(0, min(100, confidence))
 
-    # NEW: Calculate a simple proxy for Remaining Useful Life (RUL) in Days
-    # RUL decreases with increasingly negative ML scores.
-    # Assume 30 days RUL at the first anomaly detection (ml_score ~0.0)
+    # 2. Remaining Useful Life (RUL) in Days
     base_rul_days = 30
+    # RUL decreases with increasingly negative ML scores. Map score 0.0 to 30 days, -0.3 to 1 day.
     rul_days = max(1, int(base_rul_days + (ml_score * 100)))
 
     return is_ml_anomaly, ml_score, confidence, rul_days
 
 
-# --- NEW: ROI Calculation Function ---
+# --- ROI Calculation Function ---
 def calculate_pdm_roi(anomaly_count, cost_data):
     """Calculates ROI metrics based on simulated savings from avoided failures."""
 
     # Estimate the number of 'critical' failures avoided
-    # Assume every 5th detected anomaly (Is_ML_Anomaly or Is_Rule_Anomaly) would have been a catastrophic failure
     critical_failures_avoided = anomaly_count // 5
 
     if critical_failures_avoided == 0:
@@ -207,21 +200,21 @@ def calculate_pdm_roi(anomaly_count, cost_data):
     # 1. Savings from avoided downtime
     downtime_savings_per_failure = (
         cost_data["Time Saved by PdM (Hours)"]
-        * cost_data["Average Downtime Cost per Hour ($)"]
+        * cost_data["Average Downtime Cost per Hour (R)"]
     )
     total_downtime_savings = downtime_savings_per_failure * critical_failures_avoided
 
     # 2. Savings from reduced repair costs
     repair_cost_savings_per_failure = (
-        cost_data["Avg. Repair Cost (Reactive $)"]
-        - cost_data["Avg. Repair Cost (Predictive $)"]
+        cost_data["Avg. Repair Cost (Reactive R)"]
+        - cost_data["Avg. Repair Cost (Predictive R)"]
     )
     total_repair_savings = repair_cost_savings_per_failure * critical_failures_avoided
 
     total_savings = total_downtime_savings + total_repair_savings
 
     # Annual Investment Cost (PdM System)
-    investment_cost = cost_data["PdM System Annual Cost ($)"]
+    investment_cost = cost_data["PdM System Annual Cost (R)"]
 
     net_profit = total_savings - investment_cost
 
@@ -233,8 +226,8 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
     justification = (
         f"Avoided **{critical_failures_avoided}** catastrophic failure(s), saving:\n"
-        f"- **${total_downtime_savings:,.0f}** in potential downtime.\n"
-        f"- **${total_repair_savings:,.0f}** in reduced repair costs."
+        f"- **{CURRENCY_FORMAT.format(total_downtime_savings)}** in potential downtime.\n"
+        f"- **{CURRENCY_FORMAT.format(total_repair_savings)}** in reduced repair costs."
     )
 
     return {
@@ -246,19 +239,49 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
-st.title("S.I.L.K.E Predictive Maintenance Demo")
+# --- NEW: Updated Titles ---
+st.title(f"{LOGO_TEXT} Predictive Maintenance Demo: {INDUSTRY_TITLE}")
+st.write("Live data stream and anomaly detection for critical equipment.")
 
-# --- NEW: Role Selector ---
+# --- Role Selector ---
 role = st.sidebar.radio(
     "👤 Select User Role:", ("Plant Manager", "Technician"), index=0
 )
 st.sidebar.markdown("---")
 
+# --- NEW: Sidebar Content ---
+with st.sidebar:
+    st.header("About This Asset")
+    st.info(
+        f"💡 Monitoring the primary **Grinding Mill Motor** in a {INDUSTRY_TITLE} facility. Predictive insights ensure maximum uptime and product quality."
+    )
+
+    st.markdown("---")
+    st.header("The Value Proposition (PdM)")
+
+    st.markdown(
+        """
+    Our solution helps you shift from reactive to **proactive maintenance** by providing:
+
+    -   **Uptime & RUL:** AI models predict equipment failure, reducing unexpected downtime.
+    -   **Cost Savings (ROI):** Reduced repair costs by scheduling maintenance before catastrophic failure.
+    -   **Actionable Intelligence:** Provides context-specific data for both financial and maintenance teams.
+    -   **Localization:** Built for the South African industrial environment.
+    """
+    )
+    st.markdown("---")
+    st.image(
+        "https://upload.wikimedia.org/wikipedia/commons/e/e0/Coat_of_arms_of_the_Free_State.svg",
+        caption="Proudly operating in the Free State, SA",
+        use_column_width=True,
+    )
+
 # Conditional title for the main dashboard
 if role == "Plant Manager":
-    st.header("Financial & Operational Health Dashboard 💰")
+    # NEW TITLE
+    st.header("Executive Financial & Asset Health Overview 💰📊")
 else:
-    st.header("Detailed Sensor & AI Anomaly Diagnostics 🛠️")
+    st.header("Technician's Detailed Sensor & AI Diagnostics 🛠️⚙️")
 
 
 # Initialize session state for simulation
@@ -268,12 +291,12 @@ if "current_df" not in st.session_state:
     initial_row["Is_ML_Anomaly"] = False
     initial_row["Anomaly_Reasoning"] = ""
     initial_row["ML_Anomaly_Score"] = 0.0
-    initial_row["AI_Confidence"] = 0.0  # NEW
-    initial_row["RUL_Days"] = 0  # NEW
+    initial_row["AI_Confidence"] = 0.0
+    initial_row["RUL_Days"] = 0
     st.session_state.current_df = initial_row
     st.session_state.current_row_index = 1
     st.session_state.anomaly_count = 0
-    st.session_state.rul_days = 30  # Initial RUL
+    st.session_state.rul_days = 30
 
 # Create empty placeholders for all dynamic UI elements
 kpi_placeholder = st.empty()
@@ -292,13 +315,15 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-        col_kpi1.metric("💰 Total Savings (YTD)", f"${roi_data['Total Savings']:,.0f}")
+        # Currency updated to ZAR
+        col_kpi1.metric(
+            "💰 Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
+        )
         col_kpi2.metric(
             "📈 Net ROI", f"{roi_data['Net ROI']:,.1f}%", delta=roi_data["ROI Status"]
         )
         col_kpi3.metric("🚨 Total Anomalies", anomaly_count)
 
-        # Display the AI's current RUL (or a neutral status if no anomaly)
         rul_display = (
             f"{st.session_state.rul_days} Days"
             if st.session_state.rul_days < 30
@@ -309,14 +334,12 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     with alert_ph.container():
         st.subheader("ROI Justification & Operational Status")
 
-        # Display ROI Justification
         st.info(
             f"**Value Proposition:** The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
             f"{roi_data['Justification']}"
         )
 
-        # Display a simplified alert message
-        if anomaly_count > 0:
+        if st.session_state.rul_days <= 30:
             last_anomaly = current_df[
                 current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
             ].iloc[-1]
@@ -329,17 +352,13 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         else:
             st.success("✅ System Health: Excellent. No immediate financial risk.")
 
-    # The Plant Manager typically only needs a high-level operational chart
     with chart_placeholder.container():
         st.subheader("Key Sensor Data Trends")
-        df_display = current_df.tail(200)  # Show a recent window
+        df_display = current_df.tail(200)
         fig_main = px.line(
             df_display,
             x=df_display.index,
-            y=[
-                "Power_kW",
-                "Vibration",
-            ],  # Power and Vibe are key operational indicators
+            y=["Power_kW", "Vibration"],
             labels={"value": "Value", "Timestamp": "Time"},
             title="Recent Power and Vibration Trend",
         )
@@ -359,58 +378,71 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         st.subheader("Key Sensor Readings & AI Diagnostics")
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-        # Sensor data
         col_kpi1.metric("Latest Vibration", f"{latest_row['Vibration']:.2f}g")
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
-        # NEW: AI Metrics
         col_kpi3.metric("🤖 AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
+        # RUL (Predicted) is updated from the session state, not just the current row
         col_kpi4.metric("⏳ RUL (Predicted)", f"{st.session_state.rul_days} Days")
 
     with alert_ph.container():
-        if anomaly_count > 0:
-            last_anomaly = current_df[
-                current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
-            ].iloc[-1]
-            st.error(
-                f"🚨 Anomaly Detected at {last_anomaly.name.strftime('%Y-%m-%d %H:%M:%S')}!"
-            )
-            st.markdown(
-                f"**Root Cause Analysis:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
-            )
-            st.markdown(
-                f"**ML Score:** `{last_anomaly['ML_Anomaly_Score']:.4f}` **| AI Confidence:** `{last_anomaly['AI_Confidence']:.1f}%`"
-            )
+        # Corrected the logic: Only show a detailed alert if RUL is low (critical)
+        if st.session_state.rul_days <= 30:
 
-            # --- Detailed Anomaly Chart (same as original, but clearer) ---
-            with st.expander(
-                f"Show Detailed Sensor Readings (2hr window around anomaly)"
-            ):
-                df_anomaly_window = current_df.loc[
-                    (current_df.index >= last_anomaly.name - pd.Timedelta(hours=2))
-                    & (current_df.index <= last_anomaly.name + pd.Timedelta(hours=2))
-                ]
-                fig_anomaly = px.line(
-                    df_anomaly_window,
-                    x=df_anomaly_window.index,
-                    y=["Power_kW", "Amperage", "Vibration", "Temperature"],
-                    title=f"Sensor Readings Around Anomaly at {last_anomaly.name.strftime('%Y-%m-%d %H:%M:%S')}",
+            # Find the most recent anomaly that contributed to the low RUL
+            anomalies = current_df[
+                (current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"])
+                & (current_df["RUL_Days"] <= st.session_state.rul_days + 1)
+            ]
+
+            if not anomalies.empty:
+                last_anomaly = anomalies.iloc[-1]
+                st.error(
+                    f"🚨 **IMMEDIATE ACTION REQUIRED:** Failure predicted in **{st.session_state.rul_days} days**."
+                )
+                st.markdown(
+                    f"**Root Cause Analysis:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
+                )
+                st.markdown(
+                    f"**ML Score:** `{last_anomaly['ML_Anomaly_Score']:.4f}` **| AI Confidence:** `{last_anomaly['AI_Confidence']:.1f}%`"
                 )
 
-                fig_anomaly.add_trace(
-                    go.Scatter(
-                        x=[last_anomaly.name],
-                        y=[last_anomaly["Power_kW"]],
-                        mode="markers",
-                        marker=dict(color="red", size=15, symbol="x"),
-                        name="Anomaly Point",
+                # --- Detailed Anomaly Chart ---
+                with st.expander(
+                    f"Show Detailed Sensor Readings (2hr window around last critical event)"
+                ):
+                    df_anomaly_window = current_df.loc[
+                        (current_df.index >= last_anomaly.name - pd.Timedelta(hours=2))
+                        & (
+                            current_df.index
+                            <= last_anomaly.name + pd.Timedelta(hours=2)
+                        )
+                    ]
+                    fig_anomaly = px.line(
+                        df_anomaly_window,
+                        x=df_anomaly_window.index,
+                        y=["Power_kW", "Amperage", "Vibration", "Temperature"],
+                        title=f"Sensor Readings Around Critical Anomaly at {last_anomaly.name.strftime('%Y-%m-%d %H:%M:%S')}",
                     )
-                )
 
-                st.plotly_chart(
-                    fig_anomaly,
-                    use_container_width=True,
-                    key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
+                    fig_anomaly.add_trace(
+                        go.Scatter(
+                            x=[last_anomaly.name],
+                            y=[last_anomaly["Power_kW"]],
+                            mode="markers",
+                            marker=dict(color="red", size=15, symbol="x"),
+                            name="Anomaly Point",
+                        )
+                    )
+
+                    st.plotly_chart(
+                        fig_anomaly,
+                        use_container_width=True,
+                        key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
+                    )
+            else:
+                st.success(
+                    "✅ System Operating Normally - All sensor data within acceptable limits."
                 )
 
         else:
@@ -419,9 +451,10 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
             )
 
     # --- Full Sensor Chart ---
-    with chart_ph.container():
+    # FIX: Removed the redundant chart placeholder update for a clean UI separation
+    with chart_ph.container():  # Using the allocated placeholder
         st.subheader("Full History Sensor Data Monitoring")
-        df_display_full = current_df.tail(1000)  # Only display the last 1000 points
+        df_display_full = current_df.tail(1000)
         fig_main = px.line(
             df_display_full,
             x=df_display_full.index,
@@ -453,28 +486,26 @@ while st.session_state.current_row_index < len(full_data_df):
         ].copy()
 
         is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(next_row.iloc[0])
-        is_ml_anomaly, ml_score, ai_confidence, rul_days = (
-            check_ml_anomaly(  # NEW: Unpack new values
-                next_row.iloc[0], iso_forest_model, ml_features
-            )
+        is_ml_anomaly, ml_score, ai_confidence, rul_days_current = check_ml_anomaly(
+            next_row.iloc[0], iso_forest_model, ml_features
         )
 
         next_row.loc[:, "Is_Rule_Anomaly"] = is_rule_anomaly
         next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
         next_row.loc[:, "Anomaly_Reasoning"] = rule_reasoning
         next_row.loc[:, "ML_Anomaly_Score"] = ml_score
-        next_row.loc[:, "AI_Confidence"] = ai_confidence  # NEW
-        next_row.loc[:, "RUL_Days"] = rul_days  # NEW
+        next_row.loc[:, "AI_Confidence"] = ai_confidence
+        next_row.loc[:, "RUL_Days"] = rul_days_current
 
         st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
         st.session_state.current_row_index += 1
 
-        # Update RUL globally if an anomaly is detected, and it's the lowest seen
         if is_rule_anomaly or is_ml_anomaly:
             st.session_state.anomaly_count += 1
-            st.session_state.rul_days = min(st.session_state.rul_days, rul_days)
+            # RUL is determined by the lowest predicted value so far
+            st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
         elif st.session_state.rul_days < 30 and ml_score > 0:
-            # Simple simulation: RUL can recover slightly if score is positive
+            # RUL can recover slightly if the current reading is normal (positive ML score)
             st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
 
         # Call the new function to update all UI elements
@@ -484,7 +515,7 @@ while st.session_state.current_row_index < len(full_data_df):
             chart_placeholder,
             st.session_state.current_df,
             st.session_state.anomaly_count,
-            role,  # NEW: Pass the role
+            role,
         )
 
         time.sleep(DATA_POINT_INTERVAL)
