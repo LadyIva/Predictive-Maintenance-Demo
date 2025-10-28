@@ -13,18 +13,18 @@ st.set_page_config(layout="wide", page_title="S.I.L.K.E. AI: Smart Maize Mill Pd
 DATA_POINT_INTERVAL = 0.5
 file_path = "maize_mill_simulated_sensor_data.csv"
 
-# --- NEW: Branding and Currency ---
+# --- Branding and Currency ---
 LOGO_TEXT = "S.I.L.K.E. AI"
-INDUSTRY_TITLE = "Smart Maize Mill Grinding Line"  # Suggestion
+INDUSTRY_TITLE = "Smart Maize Mill Grinding Line"
 CURRENCY_SYMBOL = "R"  # South African Rand
 CURRENCY_FORMAT = "R {:,.0f}"
 
 # --- Placeholder for industry-specific failure/cost data (for ROI calculation) ---
 FAILURE_COST_DATA = {
-    "Average Downtime Cost per Hour (R)": 250000,  # Approx $15,000 * 16.6 ZAR/USD
+    "Average Downtime Cost per Hour (R)": 250000,
     "Time Saved by PdM (Hours)": 4,
-    "Avg. Repair Cost (Reactive R)": 800000,  # Catastrophic failure
-    "Avg. Repair Cost (Predictive R)": 150000,  # Planned repair
+    "Avg. Repair Cost (Reactive R)": 800000,
+    "Avg. Repair Cost (Predictive R)": 150000,
     "Equipment Lifespan (Years)": 10,
     "PdM System Annual Cost (R)": 400000,
 }
@@ -161,22 +161,15 @@ def check_ml_anomaly(row, model, features):
     ml_score = model.decision_function(data_point)[0]
     is_ml_anomaly = ml_prediction == -1
 
-    # Calculate a proxy for AI Confidence and RUL
-
     # 1. AI Confidence in ANOMALY (0% to 100%)
     if is_ml_anomaly:
-        # Map score from 0.0 (just detected) to -0.3 (deep anomaly) -> 50% to 100%
-        # ml_score is typically between -0.3 and 0.3.
-        # Simple linear map: Confidence = 50 - (ml_score * 500)
         confidence = min(100, max(50, 50 - (ml_score * 500)))
     else:
-        # For normal points, confidence in 'Normal' is higher for higher score (closer to 0.3)
-        confidence = 100 - (abs(ml_score) * 200)  # Simple inverse mapping
+        confidence = 100 - (abs(ml_score) * 200)
         confidence = max(0, min(100, confidence))
 
     # 2. Remaining Useful Life (RUL) in Days
     base_rul_days = 30
-    # RUL decreases with increasingly negative ML scores. Map score 0.0 to 30 days, -0.3 to 1 day.
     rul_days = max(1, int(base_rul_days + (ml_score * 100)))
 
     return is_ml_anomaly, ml_score, confidence, rul_days
@@ -186,7 +179,6 @@ def check_ml_anomaly(row, model, features):
 def calculate_pdm_roi(anomaly_count, cost_data):
     """Calculates ROI metrics based on simulated savings from avoided failures."""
 
-    # Estimate the number of 'critical' failures avoided
     critical_failures_avoided = anomaly_count // 5
 
     if critical_failures_avoided == 0:
@@ -239,7 +231,6 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
-# --- NEW: Updated Titles ---
 st.title(f"{LOGO_TEXT} Predictive Maintenance Demo: {INDUSTRY_TITLE}")
 st.write("Live data stream and anomaly detection for critical equipment.")
 
@@ -249,7 +240,7 @@ role = st.sidebar.radio(
 )
 st.sidebar.markdown("---")
 
-# --- NEW: Sidebar Content ---
+# --- Sidebar Content ---
 with st.sidebar:
     st.header("About This Asset")
     st.info(
@@ -278,7 +269,6 @@ with st.sidebar:
 
 # Conditional title for the main dashboard
 if role == "Plant Manager":
-    # NEW TITLE
     st.header("Executive Financial & Asset Health Overview 💰📊")
 else:
     st.header("Technician's Detailed Sensor & AI Diagnostics 🛠️⚙️")
@@ -315,7 +305,6 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-        # Currency updated to ZAR
         col_kpi1.metric(
             "💰 Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
         )
@@ -382,14 +371,11 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
         col_kpi3.metric("🤖 AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
-        # RUL (Predicted) is updated from the session state, not just the current row
         col_kpi4.metric("⏳ RUL (Predicted)", f"{st.session_state.rul_days} Days")
 
     with alert_ph.container():
-        # Corrected the logic: Only show a detailed alert if RUL is low (critical)
         if st.session_state.rul_days <= 30:
 
-            # Find the most recent anomaly that contributed to the low RUL
             anomalies = current_df[
                 (current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"])
                 & (current_df["RUL_Days"] <= st.session_state.rul_days + 1)
@@ -451,8 +437,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
             )
 
     # --- Full Sensor Chart ---
-    # FIX: Removed the redundant chart placeholder update for a clean UI separation
-    with chart_ph.container():  # Using the allocated placeholder
+    with chart_ph.container():
         st.subheader("Full History Sensor Data Monitoring")
         df_display_full = current_df.tail(1000)
         fig_main = px.line(
@@ -481,15 +466,26 @@ def update_dashboard(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, role
 # The continuous simulation loop
 while st.session_state.current_row_index < len(full_data_df):
     try:
+        # 1. Attempt to slice the next row
         next_row = full_data_df.iloc[
             st.session_state.current_row_index : st.session_state.current_row_index + 1
         ].copy()
 
-        is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(next_row.iloc[0])
+        # 🛑 CRITICAL FIX: Guarding the Index Access
+        if next_row.empty:
+            st.warning("⚠️ Data stream ended unexpectedly. Exiting simulation.")
+            break
+
+        # 2. Get the single row for processing
+        row_to_process = next_row.iloc[0]
+
+        # 3. Check for anomalies
+        is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row_to_process)
         is_ml_anomaly, ml_score, ai_confidence, rul_days_current = check_ml_anomaly(
-            next_row.iloc[0], iso_forest_model, ml_features
+            row_to_process, iso_forest_model, ml_features
         )
 
+        # 4. Update the DataFrame and session state
         next_row.loc[:, "Is_Rule_Anomaly"] = is_rule_anomaly
         next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
         next_row.loc[:, "Anomaly_Reasoning"] = rule_reasoning
@@ -500,15 +496,14 @@ while st.session_state.current_row_index < len(full_data_df):
         st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
         st.session_state.current_row_index += 1
 
+        # 5. Update RUL
         if is_rule_anomaly or is_ml_anomaly:
             st.session_state.anomaly_count += 1
-            # RUL is determined by the lowest predicted value so far
             st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
         elif st.session_state.rul_days < 30 and ml_score > 0:
-            # RUL can recover slightly if the current reading is normal (positive ML score)
             st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
 
-        # Call the new function to update all UI elements
+        # 6. Call the new function to update all UI elements
         update_dashboard(
             kpi_placeholder,
             alert_placeholder,
