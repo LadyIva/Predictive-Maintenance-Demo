@@ -32,7 +32,7 @@ CONFIG = {
     # Real-time RUL/Lead Time: If AI is confident, predict failure in this many days
     "PREDICTED_LEAD_TIME_DAYS": 25,
     # New Config for Real-Time Loop
-    "UPDATE_INTERVAL_SECONDS": 1,  # Reverted to 1 second for the original speed
+    "UPDATE_INTERVAL_SECONDS": 1,  # Real-time speed set to 1 second per data point
 }
 
 st.set_page_config(
@@ -89,10 +89,11 @@ st.markdown(
 
 # --- Session State Management for Live Mode ---
 if "days_progressed" not in st.session_state:
-    # Start the demo at a point just before failure for maximum impact (e.g., 50% of max days)
+    # Start the demo at the beginning
     st.session_state.days_progressed = 1
+# Set 'playing' to True by default to auto-start the stream (as requested)
 if "playing" not in st.session_state:
-    st.session_state.playing = False
+    st.session_state.playing = True
 if "initial_load" in st.session_state:
     del st.session_state.initial_load
 
@@ -101,6 +102,7 @@ if "initial_load" in st.session_state:
 # 2. DATA LOADING AND MODEL INITIALIZATION
 # ==============================================================================
 
+# User note: This uses the original data file, not a new generation process.
 file_path = "maize_mill_simulated_sensor_data.csv"
 
 
@@ -388,38 +390,62 @@ def render_plant_manager_view(
 
 
 def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
-    """Renders the detailed sensor data and technical analysis focused dashboard."""
+    """
+    Renders the detailed sensor data and technical analysis focused dashboard.
+    This layout is simplified to match the requested "original dashboard" look.
+    """
     st.header(f"Real-Time Diagnostics: {CONFIG['ASSET_NAME']} (Technician View)")
 
-    # --- AI Confidence and Current Status ---
-    col_status, col_conf = st.columns([2, 1])
-
-    with col_status:
-        st.markdown(
-            f"**Current Operation State:** {'Anomaly Detected' if latest_confidence >= 50 else 'Normal Operation'} "
-            f"| **Last Data Point Received:** {df_slice.index[-1].strftime('%Y-%m-%d %H:%M')}"
+    # --- Current Status Bar (Concise, technical view - simulating original look) ---
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.metric(
+            "AI Confidence",
+            f"{latest_confidence:.1f}%",
+            help="Confidence that the asset is exhibiting anomalous behavior.",
         )
 
-    with col_conf:
-        st.metric("AI Confidence", f"{latest_confidence:.1f}%")
+    with col2:
+        current_time_display = df_slice.index[-1].strftime("%Y-%m-%d %H:%M:%S")
+        status_display = (
+            "CRITICAL ANOMALY DETECTED"
+            if latest_confidence >= 90
+            else (
+                "Warning (Degradation)"
+                if latest_confidence >= 50
+                else "Normal Operation"
+            )
+        )
+
+        # Custom HTML for a clean status block
+        st.markdown(
+            f"""
+            <div style="background-color: #F9FAFB; padding: 10px; border-radius: 8px; border: 1px solid #E5E7EB;">
+                <p style="margin: 0; font-size: 0.9rem; color: #6B7280;">Last Data Point Time</p>
+                <p style="margin: 0; font-weight: bold; font-size: 1.1rem;">{current_time_display}</p>
+                <p style="margin: 5px 0 0 0; font-size: 0.9rem; color: #6B7280;">Operation State</p>
+                <p style="margin: 0; font-weight: bold; color: {'#EF4444' if latest_confidence >= 50 else '#10B981'}; font-size: 1.1rem;">{status_display}</p>
+            </div>
+        """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
 
     # --- Main Time-Series Charts (Sensor Data Streams) ---
-    st.subheader("Real-time Sensor Data Monitoring")  # Reverted to original subheader
+    st.subheader("Real-time Sensor Data Monitoring")
 
-    # Reverted to original data columns (Power_kW, Vibration, Temperature)
+    # Plotting the three primary variables (Power_kW, Vibration, Temperature)
     df_to_plot = df_slice[["Power_kW", "Vibration", "Temperature"]].copy()
 
     fig = px.line(
         df_to_plot,
-        # Reverted to original data streams
         y=["Power_kW", "Vibration", "Temperature"],
         labels={"value": "Sensor Reading", "Timestamp": "Time"},
-        title=f"Live Sensor Data Stream | Confidence: {latest_confidence:.1f}%",  # Kept dynamic confidence in title
+        title=f"Live Sensor Data Stream | Confidence: {latest_confidence:.1f}%",
         height=600,
         color_discrete_map={
-            "Power_kW": CONFIG["PRIMARY_COLOR"],  # Default Blue
+            "Power_kW": CONFIG["PRIMARY_COLOR"],
             "Vibration": "#EF4444",  # Red
             "Temperature": "#FBBF24",  # Amber
         },
@@ -454,7 +480,7 @@ def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
     fig.update_layout(hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- Detailed Anomaly Report ---
+    # --- Detailed Anomaly Report (Kept as useful utility) ---
     with st.expander("Show Latest Sensor Readings and ML Scores"):
         st.markdown(
             "The table below shows the latest readings and the confidence calculated by the Machine Learning model."
@@ -463,7 +489,7 @@ def render_technician_view(df_slice, latest_confidence, anomaly_flag_date):
         st.dataframe(
             df_slice.iloc[-20:].sort_index(ascending=False)[
                 [
-                    "Power_kW",  # Added Power back
+                    "Power_kW",
                     "Vibration",
                     "Temperature",
                     "ML_Anomaly_Score",
@@ -505,49 +531,13 @@ def main():
         )
 
         st.markdown("---")
-        st.subheader("Data Stream Control")
-
-        # --- REAL-TIME DATA STREAM SIMULATION CONTROL ---
-
-        # Slider linked to session state
-        st.session_state.days_progressed = st.slider(
-            "Simulated Data Progress (Days)",
-            min_value=1,
-            max_value=total_days,
-            value=st.session_state.days_progressed,
-            step=1,
-            key="_slider_control_",
-            help="Manually advance or rewind the data stream.",
+        # New info block replacing the stream controls
+        current_time_display = full_data_df.index[0] + timedelta(
+            days=st.session_state.days_progressed
         )
-
-        # Define button handlers to control the loop
-        def start_stream():
-            st.session_state.playing = True
-
-        def pause_stream():
-            st.session_state.playing = False
-
-        # Play/Pause Controls
-        col_play, col_pause = st.columns(2)
-
-        with col_play:
-            st.button(
-                "▶️ Start Live Stream",
-                on_click=start_stream,
-                use_container_width=True,
-                disabled=st.session_state.playing,
-            )
-
-        with col_pause:
-            st.button(
-                "⏸️ Pause Stream",
-                on_click=pause_stream,
-                use_container_width=True,
-                disabled=not st.session_state.playing,
-            )
-
-        # Container for displaying the current time
-        time_placeholder = st.empty()
+        st.info(
+            f"**Live Stream Time:** {current_time_display.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
 
     # --- 1. CORE DATA PROCESSING ---
     end_date = full_data_df.index[0] + timedelta(days=st.session_state.days_progressed)
@@ -559,6 +549,10 @@ def main():
         get_prediction_metrics(df_slice)
     )
 
+    # NOTE for User: These metrics are derived directly from the 'df_slice',
+    # ensuring the Plant Manager View is calculated from the same live data stream
+    # as displayed in the Technician View. This confirms the requested behavior is possible.
+
     # --- 2. RENDER DASHBOARD BASED ON ROLE ---
     if user_role == "Plant Manager":
         render_plant_manager_view(
@@ -567,30 +561,22 @@ def main():
     elif user_role == "Technician":
         render_technician_view(df_slice, latest_confidence, anomaly_flag_date)
 
-    # Update the time in the sidebar
-    with time_placeholder.container():
-        st.info(
-            f"**Current System Time:** {df_slice.index[-1].strftime('%Y-%m-%d %H:%M')} "
-        )
+    # --- 3. AUTO-ADVANCE LOGIC (Automatic Live Stream Implementation) ---
+    # The simulation runs automatically until the end of the data is reached.
 
-    # --- 3. AUTO-ADVANCE LOGIC (Correct Live Motion Implementation) ---
+    # Check for end condition first
+    if st.session_state.days_progressed >= total_days:
+        st.sidebar.error("⚠️ **SIMULATION ENDED:** Failure event has occurred.")
+        return
 
-    if st.session_state.playing:
+    # 1. Increment Data Stream for the NEXT run
+    st.session_state.days_progressed += 1
 
-        # Check for end condition first
-        if st.session_state.days_progressed >= total_days:
-            st.session_state.playing = False
-            st.sidebar.error("⚠️ **SIMULATION ENDED:** Failure event has occurred.")
-            return
+    # 2. Wait for the specified interval (non-blocking)
+    time.sleep(CONFIG["UPDATE_INTERVAL_SECONDS"])
 
-        # 1. Increment Data Stream for the NEXT run
-        st.session_state.days_progressed += 1
-
-        # 2. Wait for the specified interval (non-blocking)
-        time.sleep(CONFIG["UPDATE_INTERVAL_SECONDS"])
-
-        # 3. Tell Streamlit to re-execute the script from the top
-        st.rerun()
+    # 3. Tell Streamlit to re-execute the script from the top
+    st.rerun()
 
 
 if __name__ == "__main__":
