@@ -110,19 +110,19 @@ full_data_df = load_data(file_path)
 # Map key dates to the index of the first data point on that date
 DATE_TO_INDEX_MAP = {
     "Start (Aug 1)": full_data_df.index.searchsorted(
-        pd.to_datetime("2024-08-01 00:00:00")
+        [pd.to_datetime("2024-08-01 00:00:00")]
     )[0],
     "Anomaly D (Aug 10)": full_data_df.index.searchsorted(
-        pd.to_datetime("2024-08-10 00:00:00")
+        [pd.to_datetime("2024-08-10 00:00:00")]
     )[0],
     "Anomaly C (Aug 25)": full_data_df.index.searchsorted(
-        pd.to_datetime("2024-08-25 00:00:00")
+        [pd.to_datetime("2024-08-25 00:00:00")]
     )[0],
     "Anomaly B (Sep 5)": full_data_df.index.searchsorted(
-        pd.to_datetime("2024-09-05 00:00:00")
+        [pd.to_datetime("2024-09-05 00:00:00")]
     )[0],
     "Anomaly A (Sep 20)": full_data_df.index.searchsorted(
-        pd.to_datetime("2024-09-20 00:00:00")
+        [pd.to_datetime("2024-09-20 00:00:00")]
     )[0],
 }
 # ----------------------------------------------------------------
@@ -352,6 +352,7 @@ def get_maintenance_schedule(rul_days, current_timestamp):
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
 
+
 # --- Initial Setup ---
 # Find the default starting index (Aug 1st)
 default_start_date_label = "Start (Aug 1)"
@@ -391,6 +392,7 @@ if "current_df" not in st.session_state:
 
 st.title(INDUSTRY_TITLE)
 st.write("Live data stream and anomaly detection for critical equipment.")
+
 
 # --- Sidebar Content ---
 with st.sidebar:
@@ -513,7 +515,6 @@ if st.session_state.selected_role == "Plant Manager":
     st.header("Executive Financial & Asset Health Overview")
 else:
     st.header("Technician's Detailed Sensor & AI Diagnostics")
-
 
 # Create empty placeholder for all dynamic UI elements
 # We wrap the main content in a container with a dynamic key for stability
@@ -642,7 +643,7 @@ def update_plant_manager_view(content_ph, current_df, anomaly_count):
         st.markdown("---")
 
         # Maintenance Schedule Forecast
-        st.markdown(f"**Proactive Maintenance Schedule Forecast**")
+        st.markdown(f"🗓️ **Proactive Maintenance Schedule Forecast**")
         if risk_color in ["red", "orange"]:
             st.markdown(
                 f"The current Remaining Useful Life (RUL) of **{rul_days} days** dictates the following maintenance window:"
