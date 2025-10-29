@@ -307,6 +307,29 @@ def calculate_pdm_roi(anomaly_count, cost_data):
     }
 
 
+# --- NEW ADDON FUNCTION: Maintenance Scheduling ---
+def get_maintenance_schedule(rul_days, current_timestamp):
+    """Calculates the proposed maintenance window based on RUL."""
+
+    # If RUL is healthy (>= 30 days)
+    if rul_days >= 30:
+        return "No immediate maintenance required. Schedule next routine inspection."
+
+    # Calculate the end date of the predicted safe operation period (RUL)
+    safe_end_date = current_timestamp + pd.Timedelta(days=rul_days)
+
+    # Suggest a window that is 5 days prior to the RUL end date
+    start_window = safe_end_date - pd.Timedelta(days=5)
+
+    # Format dates nicely
+    start_str = start_window.strftime("%Y-%m-%d")
+    end_str = safe_end_date.strftime("%Y-%m-%d")
+
+    return f"**PROPOSED WINDOW:** {start_str} to {end_str} (Must be completed before RUL expires on {end_str})."
+
+
+# ----------------------------------------------------
+
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
 
 st.title(INDUSTRY_TITLE)
@@ -415,6 +438,10 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     cost_at_risk = roi_data["Potential Downtime Cost"]
     rul_days = st.session_state.rul_days
 
+    # Get the latest timestamp for scheduling
+    latest_timestamp = current_df.index[-1]
+    maintenance_schedule = get_maintenance_schedule(rul_days, latest_timestamp)
+
     risk_level, risk_color, risk_summary = get_financial_risk_level(
         rul_days, anomaly_count, cost_at_risk
     )
@@ -422,7 +449,8 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     with kpi_ph.container():
         st.subheader("Financial Performance & Predictive Insights")
 
-        col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+        # Expanded to 5 columns for new KPI
+        col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
 
         col_kpi1.metric(
             "Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
@@ -432,7 +460,25 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         )
         col_kpi3.metric("Total Anomalies", anomaly_count)
 
-        # --- NEW KPI: Financial Risk Level ---
+        # --- NEW ADDON KPI: Asset Health Rank ---
+        # Simulate a ranking based on Health Index
+        if st.session_state.health_index > 80:
+            asset_rank = "1/12 (Best)"
+            rank_delta = "High Priority"
+        elif st.session_state.health_index > 50:
+            asset_rank = "5/12 (High)"
+            rank_delta = "Medium Priority"
+        else:
+            asset_rank = "11/12 (Lowest)"
+            rank_delta = "Lowest Priority"
+
+        col_kpi4.metric(
+            "Asset Health Rank",
+            asset_rank,
+            delta=f"HI: {st.session_state.health_index}%",
+        )
+        # -----------------------------------------
+
         if risk_color == "red":
             st_color = "🔥"  # Use an emoji for high impact
         elif risk_color == "orange":
@@ -440,7 +486,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         else:
             st_color = "✅"
 
-        col_kpi4.metric(
+        col_kpi5.metric(
             "Financial Risk Level",
             f"{st_color} {risk_level}",
             delta=f"RUL: {rul_days} Days",
@@ -448,7 +494,9 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         # -------------------------------------
 
     with alert_ph.container():
-        st.subheader("Risk-Weighted Alert & Justification")
+        st.subheader(
+            "Risk-Weighted Alert, Schedule & Justification"
+        )  # Updated Subheader
 
         # Display Risk-Weighted Alert
         if risk_color == "red":
@@ -461,6 +509,23 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         st.markdown(risk_summary)
 
         st.markdown("---")
+
+        # --- NEW ADDON: Maintenance Schedule Forecast ---
+        st.markdown(f"🗓️ **Proactive Maintenance Schedule Forecast**")
+        if risk_color in ["red", "orange"]:
+            st.markdown(
+                f"The current Remaining Useful Life (RUL) of **{rul_days} days** dictates the following maintenance window:"
+            )
+            # Highlighting the schedule for urgent planning
+            st.markdown(
+                f"<p style='background-color:#ffebeb; padding: 10px; border-radius: 5px; font-weight: bold;'>{maintenance_schedule}</p>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info(maintenance_schedule)
+
+        st.markdown("---")
+        # --------------------------------------------
 
         # Display ROI Justification (This is the long-term value statement)
         st.info(
