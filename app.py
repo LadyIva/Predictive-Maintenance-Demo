@@ -106,26 +106,8 @@ def train_isolation_forest(df_initial):
 # Global data and model initialization
 full_data_df = load_data(file_path)
 
-# --- NEW: Date-to-Index Mapping for Simulation Speed Control ---
-# Map key dates to the index of the first data point on that date
-DATE_TO_INDEX_MAP = {
-    "Start (Aug 1)": full_data_df.index.searchsorted(
-        [pd.to_datetime("2024-08-01 00:00:00")]
-    )[0],
-    "Anomaly D (Aug 10)": full_data_df.index.searchsorted(
-        [pd.to_datetime("2024-08-10 00:00:00")]
-    )[0],
-    "Anomaly C (Aug 25)": full_data_df.index.searchsorted(
-        [pd.to_datetime("2024-08-25 00:00:00")]
-    )[0],
-    "Anomaly B (Sep 5)": full_data_df.index.searchsorted(
-        [pd.to_datetime("2024-09-05 00:00:00")]
-    )[0],
-    "Anomaly A (Sep 20)": full_data_df.index.searchsorted(
-        [pd.to_datetime("2024-09-20 00:00:00")]
-    )[0],
-}
-# ----------------------------------------------------------------
+# --- Define Global Variables for Slider/Index ---
+MAX_DATA_INDEX = len(full_data_df)
 
 try:
     # We still only train the model on the first 1000 rows as intended.
@@ -217,19 +199,6 @@ def determine_failure_mode(row, rule_anomaly, ml_anomaly):
     return FAILURE_MODES_MAPPING["E"]  # Default fallback if thresholds aren't met yet
 
 
-def get_maintenance_recommendation(failure_mode):
-    """Maps the predicted failure mode to a specific maintenance action."""
-    if failure_mode == FAILURE_MODES_MAPPING["A"]:
-        return "Immediate shutdown and replace **NDE (Non-Drive End) bearing**. Schedule a detailed vibration analysis before restart."
-    if failure_mode == FAILURE_MODES_MAPPING["B"]:
-        return "Schedule **Laser Alignment Check and Correction**. Inspect coupling condition and check foundation bolt torque."
-    if failure_mode == FAILURE_MODES_MAPPING["C"]:
-        return "Initiate **Motor Circuit Analysis (MCA)** test immediately. Check for winding insulation breakdown or rotor bar cracks."
-    if failure_mode == FAILURE_MODES_MAPPING["D"]:
-        return "Check **Oil Level and Quality (lubrication) immediately**. Schedule oil sample for Particle Count (ISO 4406) and spectral analysis."
-    return "Continue normal operation. Monitor closely. Check for external process disturbances."
-
-
 def check_ml_anomaly(row, model, features):
     """Applies the Isolation Forest model to a single data row and calculates HI/RUL."""
     if model is None or features is None or any(pd.isna(row[features])):
@@ -272,6 +241,7 @@ def check_ml_anomaly(row, model, features):
 def calculate_pdm_roi(anomaly_count, cost_data):
     """Calculates ROI metrics based on simulated savings from avoided failures."""
 
+    # One critical failure avoided for every 5 minor anomalies detected
     critical_failures_avoided = anomaly_count // 5
 
     # Calculate Potential Downtime Cost (Cost-at-Risk)
@@ -348,50 +318,113 @@ def get_maintenance_schedule(rul_days, current_timestamp):
     return f"**PROPOSED WINDOW:** {start_str} to {end_str} (Must be completed before RUL expires on {end_str})."
 
 
-# ----------------------------------------------------
+# --- 3. Simulation State Management Helper Function ---
+def initialize_simulation_state(start_index):
+    """
+    Initializes the simulation state (current_df, RUL, HI, Anomaly Count)
+    at a specific starting index, simulating a fast-forward jump.
+    """
+    # Ensure start_index is valid
+    start_index = min(max(0, start_index), MAX_DATA_INDEX)
 
-# --- 3. Streamlit UI Rendering and Simulation Logic ---
-
-
-# --- Initial Setup ---
-# Find the default starting index (Aug 1st)
-default_start_date_label = "Start (Aug 1)"
-default_start_index = DATE_TO_INDEX_MAP.get(default_start_date_label, 0)
-
-# Initialize session state for simulation
-if "current_df" not in st.session_state:
-    # Initialize the DataFrame with data up to the selected start point
-    initial_data = full_data_df.iloc[:default_start_index].copy()
-
-    # If no data before start index, use the first row and default to 0 index
-    if initial_data.empty:
-        initial_row = full_data_df.head(1).copy()
-        start_index_for_loop = 1
-    else:
-        initial_row = initial_data.iloc[-1:].copy()
-        start_index_for_loop = default_start_index
-
-    # Ensure initial columns exist
-    initial_row["Is_Rule_Anomaly"] = False
-    initial_row["Is_ML_Anomaly"] = False
-    initial_row["Anomaly_Reasoning"] = ""
-    initial_row["ML_Anomaly_Score"] = 0.0
-    initial_row["AI_Confidence"] = 0.0
-    initial_row["RUL_Days"] = 30  # Default to 30 days for new start
-    initial_row["Health_Index"] = 100
-    initial_row["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
-
-    st.session_state.current_df = initial_row
-    st.session_state.current_row_index = (
-        start_index_for_loop  # Start the loop from the selected index
-    )
+    # Reset core state variables
+    st.session_state.current_row_index = start_index
     st.session_state.anomaly_count = 0
     st.session_state.rul_days = 30
     st.session_state.health_index = 100
-    st.session_state.selected_start_date_label = default_start_date_label
+
+    # Slice data up to the start_index (exclusive)
+    jump_data = full_data_df.iloc[:start_index].copy()
+
+    if jump_data.empty:
+        # If jumping to index 0, use the first row and set defaults
+        initial_row = full_data_df.head(1).copy()
+        initial_row["Is_Rule_Anomaly"] = False
+        initial_row["Is_ML_Anomaly"] = False
+        initial_row["Anomaly_Reasoning"] = ""
+        initial_row["ML_Anomaly_Score"] = 0.0
+        initial_row["AI_Confidence"] = 0.0
+        initial_row["RUL_Days"] = 30
+        initial_row["Health_Index"] = 100
+        initial_row["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
+        st.session_state.current_df = initial_row
+        st.session_state.current_row_index = 1  # Start loop at index 1
+        return
+
+    # Process the data slice to calculate the state at the jump point
+    processed_data = jump_data.copy()
+
+    # Pre-add the necessary analysis columns
+    processed_data.loc[:, "Is_Rule_Anomaly"] = False
+    processed_data.loc[:, "Is_ML_Anomaly"] = False
+    processed_data.loc[:, "Anomaly_Reasoning"] = ""
+    processed_data.loc[:, "ML_Anomaly_Score"] = 0.0
+    processed_data.loc[:, "AI_Confidence"] = 0.0
+    processed_data.loc[:, "RUL_Days"] = 30
+    processed_data.loc[:, "Health_Index"] = 100
+    processed_data.loc[:, "Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
+
+    # To calculate RUL/HI accurately at the jump point, we re-run the analysis
+    # on the last 500 rows leading up to it (or the whole slice if smaller).
+    start_idx_for_analysis = max(0, start_index - 500)
+
+    # Note: Using .iloc[i] here for safe access on the sliced DF
+    for i in range(start_idx_for_analysis, start_index):
+        row = jump_data.iloc[i]
+
+        # Recalculate anomaly and state
+        is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row)
+        (
+            is_ml_anomaly,
+            ml_score,
+            ai_confidence,
+            rul_days_current,
+            health_index_current,
+            predicted_failure_mode,
+        ) = check_ml_anomaly(row, iso_forest_model, ml_features)
+
+        # Update the processed_data DF
+        processed_data.loc[row.name, "Is_Rule_Anomaly"] = is_rule_anomaly
+        processed_data.loc[row.name, "Is_ML_Anomaly"] = is_ml_anomaly
+        processed_data.loc[row.name, "Anomaly_Reasoning"] = rule_reasoning
+        processed_data.loc[row.name, "ML_Anomaly_Score"] = ml_score
+        processed_data.loc[row.name, "AI_Confidence"] = ai_confidence
+        processed_data.loc[row.name, "RUL_Days"] = rul_days_current
+        processed_data.loc[row.name, "Health_Index"] = health_index_current
+        processed_data.loc[row.name, "Predicted_Failure_Mode"] = predicted_failure_mode
+
+        # Update Global State (this cumulative effect defines the state at the jump)
+        if is_rule_anomaly or is_ml_anomaly:
+            st.session_state.anomaly_count += 1
+            st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
+            st.session_state.health_index = min(
+                st.session_state.health_index, health_index_current
+            )
+        elif st.session_state.rul_days < 30 and ml_score > 0:
+            st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
+            st.session_state.health_index = min(100, st.session_state.health_index + 3)
+
+    # To keep the displayed history manageable, we only keep the last 500 rows of the processed data.
+    st.session_state.current_df = processed_data.tail(500)
+
+
+# --- Initial Setup (Uses the new helper function) ---
+if "current_df" not in st.session_state:
+    initialize_simulation_state(0)  # Start from the beginning
 
 st.title(INDUSTRY_TITLE)
 st.write("Live data stream and anomaly detection for critical equipment.")
+
+
+# --- Timestamp Formatting Function for Slider ---
+def format_slider_index_to_time(index):
+    # Ensure index is within bounds
+    index = int(index)
+    if index < 0:
+        return full_data_df.index[0].strftime("START: %Y-%m-%d %H:%M")
+    if index >= MAX_DATA_INDEX:
+        return full_data_df.index[-1].strftime("END: %Y-%m-%d %H:%M")
+    return full_data_df.index[index].strftime("%Y-%m-%d %H:%M")
 
 
 # --- Sidebar Content ---
@@ -399,60 +432,28 @@ with st.sidebar:
     st.header(LOGO_TEXT)
     st.markdown("---")
 
-    # --- NEW: Simulation Speed Slider ---
+    # --- NEW: Fast Forward Data Stream Slider ---
     st.subheader("Simulation Control")
 
-    # The list of keys for the slider
-    date_options = list(DATE_TO_INDEX_MAP.keys())
-
-    # Use st.select_slider for an aesthetically pleasing range selector
-    selected_date_label = st.select_slider(
-        "Simulation Speed Jump (Select Date to Start From)",
-        options=date_options,
-        value=st.session_state.selected_start_date_label,
-        key="simulation_speed_slider",
+    # The slider value controls the starting index for the stream
+    new_index_value = st.slider(
+        "Fast Forward Data Stream (Select Start Time)",
+        min_value=0,
+        max_value=MAX_DATA_INDEX,
+        value=st.session_state.current_row_index,
+        format_func=format_slider_index_to_time,
+        key="fast_forward_slider",
+        help="Use this to skip forward to a specific time in the data for analysis.",
     )
 
-    # Check if the selection changed
-    if selected_date_label != st.session_state.selected_start_date_label:
-        # Trigger a full reset and restart the simulation at the new index
-        new_start_index = DATE_TO_INDEX_MAP[selected_date_label]
-
-        # Reset relevant session state variables
-        st.session_state.current_row_index = new_start_index
-        st.session_state.anomaly_count = 0
-        st.session_state.rul_days = 30
-        st.session_state.health_index = 100
-        st.session_state.selected_start_date_label = selected_date_label
-
-        # Re-initialize the current_df up to the new start point
-        initial_data_new = full_data_df.iloc[:new_start_index].copy()
-        if not initial_data_new.empty:
-            st.session_state.current_df = initial_data_new.iloc[-1:].copy()
-        else:
-            st.session_state.current_df = full_data_df.head(
-                1
-            ).copy()  # Fallback to first row
-
-        # --- FIX: Unconditionally reset all dynamic columns on the single-row starter DF ---
-        # This is CRITICAL to ensure the DF schema is correct for concatenation when the stream restarts.
-        st.session_state.current_df["Is_Rule_Anomaly"] = False
-        st.session_state.current_df["Is_ML_Anomaly"] = False
-        st.session_state.current_df["Anomaly_Reasoning"] = ""
-        st.session_state.current_df["ML_Anomaly_Score"] = 0.0
-        st.session_state.current_df["AI_Confidence"] = 0.0
-        st.session_state.current_df["RUL_Days"] = 30
-        st.session_state.current_df["Health_Index"] = 100
-        st.session_state.current_df["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING[
-            "E"
-        ]
-        # --- END FIX ---
-
-        # Stop the current iteration and force rerun with the new state
-        st.rerun()
+    # Logic to handle the jump/reset
+    if new_index_value != st.session_state.current_row_index:
+        initialize_simulation_state(new_index_value)
+        # The Streamlit widget change automatically forces a rerun, breaking the loop and restarting
+        # the stream from the new index set in initialize_simulation_state.
 
     st.markdown("---")
-    # --- END NEW: Simulation Speed Slider ---
+    # --- END NEW: Fast Forward Data Stream Slider ---
 
     # We need to ensure the radio button value is consistent across reruns
     if "selected_role" not in st.session_state:
@@ -488,29 +489,6 @@ with st.sidebar:
     - **Optimizing Energy:** Identifying operational inefficiencies via Power/Amperage anomalies.
     """
     )
-
-    # --- The Caching Fix Implementation ---
-    st.markdown("---")
-    st.header("Admin Controls")
-
-    # Button to manually clear the cache for a "hard reset"
-    if st.button(
-        "Clear All App Cache & Rerun",
-        help="Clears the cache for data and resources, forcing reload of models.",
-    ):
-        # Clear the session state to reset the simulation completely
-        keys_to_delete = list(st.session_state.keys())
-        for key in keys_to_delete:
-            del key  # Use del key instead of del st.session_state[key] due to potential side effects in iteration.
-
-        # Correctly iterate and delete keys:
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.rerun()
-    # ------------------------------------
 
     st.markdown("---")
     st.caption(f"Powered by {LOGO_TEXT} in the Free State.")
