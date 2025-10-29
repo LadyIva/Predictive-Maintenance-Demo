@@ -17,7 +17,7 @@ FAILURE_MODES_MAPPING = {
 }
 
 # --- NEW: Branding and Currency/Localization Constants ---
-LOGO_TEXT = "S.I.L.K.E. AI"
+LOGO_TEXT = "S.I.L.K.E AI"
 INDUSTRY_TITLE = "Maize Mill Grinding Line Motor"  # Monitoring the main motor/gearbox
 CURRENCY_SYMBOL = "R"  # South African Rand
 CURRENCY_FORMAT = "R {:,.0f}"  # Format for ZAR without decimal cents
@@ -254,19 +254,23 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
     critical_failures_avoided = anomaly_count // 5
 
+    # Calculate Potential Downtime Cost (Cost-at-Risk)
+    potential_downtime_cost = (
+        cost_data["Time Saved by PdM (Hours)"]
+        * cost_data["Average Downtime Cost per Hour (R)"]
+    )
+
     if critical_failures_avoided == 0:
         return {
             "Total Savings": 0,
             "Net ROI": 0,
             "ROI Status": "Awaiting critical detection...",
             "Justification": "No major failure predicted/avoided yet.",
+            "Potential Downtime Cost": potential_downtime_cost,
         }
 
     # 1. Savings from avoided downtime
-    downtime_savings_per_failure = (
-        cost_data["Time Saved by PdM (Hours)"]
-        * cost_data["Average Downtime Cost per Hour (R)"]  # Use ZAR data
-    )
+    downtime_savings_per_failure = potential_downtime_cost
     total_downtime_savings = downtime_savings_per_failure * critical_failures_avoided
 
     # 2. Savings from reduced repair costs
@@ -299,6 +303,7 @@ def calculate_pdm_roi(anomaly_count, cost_data):
         "Net ROI": net_roi,
         "ROI Status": f"ROI: {net_roi:,.1f}%",
         "Justification": justification,
+        "Potential Downtime Cost": potential_downtime_cost,
     }
 
 
@@ -370,10 +375,49 @@ alert_placeholder = st.empty()
 chart_placeholder = st.empty()
 
 
+def get_financial_risk_level(rul_days, anomaly_count, cost_at_risk):
+    """Determines the color-coded financial risk level and corresponding message."""
+
+    risk_level = "LOW"
+    risk_color = "green"
+    risk_summary = (
+        "Operation is healthy. The PdM system is maintaining optimal reliability."
+    )
+
+    if anomaly_count == 0:
+        return risk_level, risk_color, risk_summary
+
+    if rul_days <= 10:
+        # High Risk: Imminent failure (1-10 days RUL)
+        risk_level = "CRITICAL"
+        risk_color = "red"
+        risk_summary = (
+            f"**IMMINENT FINANCIAL RISK!** Failure predicted in < 10 days. "
+            f"Potential Downtime Cost: **{CURRENCY_FORMAT.format(cost_at_risk)}** (Reactive Repair is {CURRENCY_FORMAT.format(FAILURE_COST_DATA['Avg. Repair Cost (Reactive R)'])})."
+        )
+    elif rul_days <= 30:
+        # Medium Risk: Scheduling required (10-30 days RUL)
+        risk_level = "ELEVATED"
+        risk_color = "orange"
+        risk_summary = (
+            f"**ELEVATED RISK.** Failure expected in {rul_days} days. "
+            f"Proactively scheduling maintenance can save: **{CURRENCY_FORMAT.format(cost_at_risk)}** in downtime."
+        )
+    # else: LOW Risk (RUL > 30 days)
+
+    return risk_level, risk_color, risk_summary
+
+
 def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     """Updates the dashboard for the Plant Manager (Financial KPIs/ROI)."""
 
     roi_data = calculate_pdm_roi(anomaly_count, FAILURE_COST_DATA)
+    cost_at_risk = roi_data["Potential Downtime Cost"]
+    rul_days = st.session_state.rul_days
+
+    risk_level, risk_color, risk_summary = get_financial_risk_level(
+        rul_days, anomaly_count, cost_at_risk
+    )
 
     with kpi_ph.container():
         st.subheader("Financial Performance & Predictive Insights")
@@ -388,35 +432,41 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         )
         col_kpi3.metric("Total Anomalies", anomaly_count)
 
-        rul_display = (
-            f"{st.session_state.rul_days} Days"
-            if st.session_state.rul_days < 30
-            else "Normal (30+ Days)"
+        # --- NEW KPI: Financial Risk Level ---
+        if risk_color == "red":
+            st_color = "🔥"  # Use an emoji for high impact
+        elif risk_color == "orange":
+            st_color = "⚠️"
+        else:
+            st_color = "✅"
+
+        col_kpi4.metric(
+            "Financial Risk Level",
+            f"{st_color} {risk_level}",
+            delta=f"RUL: {rul_days} Days",
         )
-        col_kpi4.metric("Predicted RUL", rul_display)
+        # -------------------------------------
 
     with alert_ph.container():
-        st.subheader("ROI Justification & Operational Status")
+        st.subheader("Risk-Weighted Alert & Justification")
 
-        # Display ROI Justification
+        # Display Risk-Weighted Alert
+        if risk_color == "red":
+            st.error(f"🔴 **CRITICAL ACTION REQUIRED**")
+        elif risk_color == "orange":
+            st.warning(f"🟠 **ELEVATED WATCH**")
+        else:
+            st.success(f"🟢 **LOW RISK**")
+
+        st.markdown(risk_summary)
+
+        st.markdown("---")
+
+        # Display ROI Justification (This is the long-term value statement)
         st.info(
-            f"**Value Proposition:** The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
+            f"**PdM Value Justification:** The system delivered significant savings by preemptively identifying maintenance needs.\n\n"
             f"{roi_data['Justification']}"
         )
-
-        # Display a simplified alert message
-        if st.session_state.rul_days <= 30 and anomaly_count > 0:
-            last_anomaly = current_df[
-                current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
-            ].iloc[-1]
-            st.error(
-                f"CRITICAL ALERT: Potential failure predicted! RUL is **{st.session_state.rul_days} days**."
-            )
-            st.markdown(
-                f"**Anomaly Cause:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'AI Detected: Uncategorized Anomaly.'}"
-            )
-        else:
-            st.success("System Health: Excellent. No immediate financial risk.")
 
     with chart_placeholder.container():
         st.subheader("Key Sensor Data Trends")
@@ -432,7 +482,6 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             title="Recent Power and Vibration Trend",
         )
         fig_main.update_layout(height=400, xaxis_title="Timestamp")
-        # Ensure unique key for the main chart
         st.plotly_chart(
             fig_main,
             use_container_width=True,
