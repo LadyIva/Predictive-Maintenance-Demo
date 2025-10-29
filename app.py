@@ -197,6 +197,19 @@ def determine_failure_mode(row, rule_anomaly, ml_anomaly):
     return FAILURE_MODES_MAPPING["E"]  # Default fallback if thresholds aren't met yet
 
 
+def get_maintenance_recommendation(failure_mode):
+    """Maps the predicted failure mode to a specific maintenance action."""
+    if failure_mode == FAILURE_MODES_MAPPING["A"]:
+        return "Immediate shutdown and replace **NDE (Non-Drive End) bearing**. Schedule a detailed vibration analysis before restart."
+    if failure_mode == FAILURE_MODES_MAPPING["B"]:
+        return "Schedule **Laser Alignment Check and Correction**. Inspect coupling condition and check foundation bolt torque."
+    if failure_mode == FAILURE_MODES_MAPPING["C"]:
+        return "Initiate **Motor Circuit Analysis (MCA)** test immediately. Check for winding insulation breakdown or rotor bar cracks."
+    if failure_mode == FAILURE_MODES_MAPPING["D"]:
+        return "Check **Oil Level and Quality (lubrication) immediately**. Schedule oil sample for Particle Count (ISO 4406) and spectral analysis."
+    return "Continue normal operation. Monitor closely. Check for external process disturbances."
+
+
 def check_ml_anomaly(row, model, features):
     """Applies the Isolation Forest model to a single data row and calculates HI/RUL."""
     if model is None or features is None or any(pd.isna(row[features])):
@@ -471,6 +484,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
                 # --- NEW: Predicted Failure Mode in Alert ---
                 predicted_mode = last_anomaly["Predicted_Failure_Mode"]
+                recommended_action = get_maintenance_recommendation(predicted_mode)
 
                 st.error(
                     f"IMMEDIATE ACTION REQUIRED: Failure predicted in **{st.session_state.rul_days} days**."
@@ -478,6 +492,12 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
                 st.markdown(
                     f"**Predicted Failure Mode:** <span style='color: #FF4B4B; font-weight: bold;'>{predicted_mode}</span>",
+                    unsafe_allow_html=True,
+                )
+
+                # --- NEW: Recommended Action in Alert ---
+                st.markdown(
+                    f"**RECOMMENDED ACTION:** <span style='color: #FF4B4B; font-weight: bold;'>{recommended_action}</span>",
                     unsafe_allow_html=True,
                 )
                 # -------------------------------------------
@@ -556,7 +576,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                 key=f"tech_main_chart_{st.session_state.current_row_index}",
             )
 
-        # Chart 2: NEW - Health Index Trend
+        # Chart 2: Health Index Gauge
         with col_chart_2:
             st.subheader("Asset Health Index Trend")
             df_health_trend = current_df.copy()
@@ -604,6 +624,47 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                 key=f"tech_health_gauge_{st.session_state.current_row_index}",
             )
             # -------------------------------
+
+        # --- NEW CHART: Failure Mode Breakdown ---
+        st.markdown("---")
+        st.subheader("Historical Predicted Failure Mode Breakdown")
+
+        # Create a dataframe for the failure mode counts
+        df_failure_counts = (
+            current_df[
+                current_df["Predicted_Failure_Mode"] != FAILURE_MODES_MAPPING["E"]
+            ]["Predicted_Failure_Mode"]
+            .value_counts()
+            .reset_index()
+        )
+        df_failure_counts.columns = ["Failure Mode", "Count"]
+
+        if not df_failure_counts.empty:
+            fig_modes = px.bar(
+                df_failure_counts,
+                x="Failure Mode",
+                y="Count",
+                color="Failure Mode",
+                title="Total Anomaly Count by Predicted Failure Type",
+                color_discrete_map={
+                    FAILURE_MODES_MAPPING["A"]: "red",
+                    FAILURE_MODES_MAPPING["B"]: "orange",
+                    FAILURE_MODES_MAPPING["C"]: "blue",
+                    FAILURE_MODES_MAPPING["D"]: "purple",
+                    FAILURE_MODES_MAPPING["E"]: "gray",
+                },
+            )
+            fig_modes.update_layout(
+                height=400, xaxis={"categoryorder": "total descending"}
+            )
+            st.plotly_chart(
+                fig_modes,
+                use_container_width=True,
+                key=f"tech_failure_modes_chart_{st.session_state.current_row_index}",
+            )
+        else:
+            st.info("No predictive failure modes detected yet.")
+        # ----------------------------------------
 
 
 def update_dashboard(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, role):
