@@ -8,13 +8,14 @@ import time
 import os
 
 # --- NEW: Branding and Currency/Localization Constants ---
-LOGO_TEXT = "S.I.L.K.E. AI"
+LOGO_TEXT = "S.I.L.K.E AI"
 INDUSTRY_TITLE = "Maize Mill Grinding Line Motor"  # Monitoring the main motor/gearbox
 CURRENCY_SYMBOL = "R"  # South African Rand
 CURRENCY_FORMAT = "R {:,.0f}"  # Format for ZAR without decimal cents
 
 # --- Configuration ---
-st.set_page_config(layout="wide", page_title=f"{LOGO_TEXT} PdM: {INDUSTRY_TITLE}")
+# CHANGE 2: Simplified page title
+st.set_page_config(layout="wide", page_title=INDUSTRY_TITLE)
 
 DATA_POINT_INTERVAL = 0.5
 file_path = "maize_mill_simulated_sensor_data.csv"
@@ -230,49 +231,25 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
-# --- NEW: Updated Title with Branding and Asset ---
+# Title is now composed of LOGO_TEXT and INDUSTRY_TITLE, but the page title is just INDUSTRY_TITLE
 st.title(f"{LOGO_TEXT} Predictive Maintenance Demo: {INDUSTRY_TITLE}")
 st.write("Live data stream and anomaly detection for critical equipment.")
 
 # --- Role Selector ---
-role = st.sidebar.radio(
-    "👤 Select User Role:", ("Plant Manager", "Technician"), index=0
-)
-st.sidebar.markdown("---")
-
-# --- NEW: Enhanced Sidebar Content ---
+# CHANGE 1: Added Logo Text to the top of the sidebar
 with st.sidebar:
-    st.header("Asset Context & Location 📍")
-    st.info(
-        f"""
-    **Asset:** Primary {INDUSTRY_TITLE}
-    **Location:** Free State, South Africa
-    **Objective:** Predict mechanical or electrical failure 
-    using real-time **Vibration, Temperature, Power, and Amperage** data.
-    """
-    )
-
+    st.title(LOGO_TEXT)
+    role = st.radio("Select User Role:", ("Plant Manager", "Technician"), index=0)
     st.markdown("---")
-    st.header("Value Proposition Summary 💡")
-
-    st.markdown(
-        """
-    Our solution provides **Actionable Intelligence** by:
-    -   **Maximizing Uptime:** Predicting RUL (Remaining Useful Life) for proactive scheduling.
-    -   **Quantifiable ROI:** Tracking and justifying savings by avoiding catastrophic failures.
-    -   **Optimizing Energy:** Identifying operational inefficiencies via Power/Amperage anomalies.
-    """
-    )
-    st.markdown("---")
-    st.caption(f"Powered by {LOGO_TEXT} in the Free State.")
 
 
 # Conditional title for the main dashboard
 if role == "Plant Manager":
-    # NEW TITLE
-    st.header("Executive Financial & Asset Health Overview 💰📊")
+    # CHANGE 3: Removed emoticon
+    st.header("Executive Financial & Asset Health Overview")
 else:
-    st.header("Technician's Detailed Sensor & AI Diagnostics 🛠️⚙️")
+    # CHANGE 3: Removed emoticons
+    st.header("Technician's Detailed Sensor & AI Diagnostics")
 
 
 # Initialize session state for simulation
@@ -306,55 +283,52 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-        # Currency updated to ZAR
+        # CHANGE 3: Removed emoticons from metric titles
         col_kpi1.metric(
-            "💰 Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
+            "Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
         )
         col_kpi2.metric(
-            "📈 Net ROI", f"{roi_data['Net ROI']:,.1f}%", delta=roi_data["ROI Status"]
+            "Net ROI", f"{roi_data['Net ROI']:,.1f}%", delta=roi_data["ROI Status"]
         )
-        col_kpi3.metric("🚨 Total Anomalies", anomaly_count)
+        col_kpi3.metric("Total Anomalies", anomaly_count)
 
         rul_display = (
             f"{st.session_state.rul_days} Days"
             if st.session_state.rul_days < 30
             else "Normal (30+ Days)"
         )
-        col_kpi4.metric("⚙️ Predicted RUL", rul_display)
+        col_kpi4.metric("Predicted RUL", rul_display)
 
     with alert_ph.container():
         st.subheader("ROI Justification & Operational Status")
 
-        # Display ROI Justification
         st.info(
-            f"**Value Proposition:** The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
+            f"Value Proposition: The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
             f"{roi_data['Justification']}"
         )
 
-        # Display a simplified alert message
-        if st.session_state.rul_days <= 30 and anomaly_count > 0:
+        if st.session_state.rul_days <= 30:
             last_anomaly = current_df[
                 current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
             ].iloc[-1]
+            # CHANGE 3: Removed emoticon
             st.error(
-                f"⚠️ **CRITICAL ALERT:** Potential failure predicted! RUL is **{st.session_state.rul_days} days**."
+                f"CRITICAL ALERT: Potential failure predicted! RUL is **{st.session_state.rul_days} days**."
             )
             st.markdown(
                 f"**Anomaly Cause:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'AI Detected: Uncategorized Anomaly.'}"
             )
         else:
-            st.success("✅ System Health: Excellent. No immediate financial risk.")
+            # CHANGE 3: Removed emoticon
+            st.success("System Health: Excellent. No immediate financial risk.")
 
     with chart_placeholder.container():
         st.subheader("Key Sensor Data Trends")
-        df_display = current_df.tail(200)  # Show a recent window
+        df_display = current_df.tail(200)
         fig_main = px.line(
             df_display,
             x=df_display.index,
-            y=[
-                "Power_kW",
-                "Vibration",
-            ],  # Power and Vibe are key operational indicators
+            y=["Power_kW", "Vibration"],
             labels={"value": "Value", "Timestamp": "Time"},
             title="Recent Power and Vibration Trend",
         )
@@ -377,14 +351,13 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         col_kpi1.metric("Latest Vibration", f"{latest_row['Vibration']:.2f}g")
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
-        col_kpi3.metric("🤖 AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
-        col_kpi4.metric("⏳ RUL (Predicted)", f"{st.session_state.rul_days} Days")
+        # CHANGE 3: Removed emoticons from metric titles
+        col_kpi3.metric("AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
+        col_kpi4.metric("RUL (Predicted)", f"{st.session_state.rul_days} Days")
 
     with alert_ph.container():
-        # Corrected: Only show a detailed alert if RUL is low (critical)
         if st.session_state.rul_days <= 30 and anomaly_count > 0:
 
-            # Find the most recent anomaly that contributed to the low RUL
             anomalies = current_df[
                 (current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"])
                 & (current_df["RUL_Days"] <= st.session_state.rul_days + 1)
@@ -392,8 +365,9 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
             if not anomalies.empty:
                 last_anomaly = anomalies.iloc[-1]
+                # CHANGE 3: Removed emoticon
                 st.error(
-                    f"🚨 **IMMEDIATE ACTION REQUIRED:** Failure predicted in **{st.session_state.rul_days} days**."
+                    f"IMMEDIATE ACTION REQUIRED: Failure predicted in **{st.session_state.rul_days} days**."
                 )
                 st.markdown(
                     f"**Root Cause Analysis:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
@@ -436,13 +410,15 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                         key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
                     )
             else:
+                # CHANGE 3: Removed emoticon
                 st.success(
-                    "✅ System Operating Normally - All sensor data within acceptable limits."
+                    "System Operating Normally - All sensor data within acceptable limits."
                 )
 
         else:
+            # CHANGE 3: Removed emoticon
             st.success(
-                "✅ System Operating Normally - All sensor data within acceptable limits."
+                "System Operating Normally - All sensor data within acceptable limits."
             )
 
     # --- Full Sensor Chart ---
@@ -479,9 +455,9 @@ while st.session_state.current_row_index < len(full_data_df):
             st.session_state.current_row_index : st.session_state.current_row_index + 1
         ].copy()
 
-        # 🛑 ADDED FIX: Check if the sliced DataFrame is empty
+        # FIX: Check if the sliced DataFrame is empty
         if next_row.empty:
-            st.warning("⚠️ Data stream ended unexpectedly. Exiting simulation.")
+            st.warning("Data stream ended unexpectedly. Exiting simulation.")
             break
 
         row_to_process = next_row.iloc[0]  # Safely get the row
@@ -520,7 +496,7 @@ while st.session_state.current_row_index < len(full_data_df):
 
     except Exception as e:
         st.error(
-            f"⚠️ Error: The simulation crashed while processing row {st.session_state.current_row_index}."
+            f"Error: The simulation crashed while processing row {st.session_state.current_row_index}."
         )
         st.error(f"**Details:** {e}")
         st.warning(
