@@ -200,7 +200,6 @@ def determine_failure_mode(row, rule_anomaly, ml_anomaly):
 def check_ml_anomaly(row, model, features):
     """Applies the Isolation Forest model to a single data row and calculates HI/RUL."""
     if model is None or features is None or any(pd.isna(row[features])):
-        # ADDED FIX: Ensure all return values are present, including new ones
         return False, 0.0, 0.0, 0, 100, FAILURE_MODES_MAPPING["E"]
 
     data_point = np.array([row[features].values])
@@ -218,11 +217,11 @@ def check_ml_anomaly(row, model, features):
     base_rul_days = 30
     rul_days = max(1, int(base_rul_days + (ml_score * 100)))
 
-    # --- NEW: Health Index Calculation ---
+    # --- Health Index Calculation ---
     # Health Index is 100% when RUL > 30 days, drops linearly to 1% at RUL = 1 day
     health_index = min(100, max(1, int((rul_days / 30) * 100)))
 
-    # --- NEW: Failure Mode Prediction (Placeholder for more complex logic) ---
+    # --- Failure Mode Prediction (Placeholder for more complex logic) ---
     is_rule_anomaly, _ = check_rule_based_anomalies(row)
     predicted_failure_mode = determine_failure_mode(row, is_rule_anomaly, is_ml_anomaly)
 
@@ -304,11 +303,9 @@ if "current_df" not in st.session_state:
     initial_row["ML_Anomaly_Score"] = 0.0
     initial_row["AI_Confidence"] = 0.0
     initial_row["RUL_Days"] = 0
-    # --- NEW Session States ---
     initial_row["Health_Index"] = 100
     initial_row["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
     st.session_state.current_df = initial_row
-    # -------------------------
     st.session_state.current_row_index = 1
     st.session_state.anomaly_count = 0
     st.session_state.rul_days = 30
@@ -422,7 +419,13 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             title="Recent Power and Vibration Trend",
         )
         fig_main.update_layout(height=400, xaxis_title="Timestamp")
-        st.plotly_chart(fig_main, use_container_width=True)
+        # --- FIX 1: Added unique key ---
+        st.plotly_chart(
+            fig_main,
+            use_container_width=True,
+            key=f"pm_main_chart_{st.session_state.current_row_index}",
+        )
+        # -------------------------------
 
 
 def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count):
@@ -517,6 +520,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                     st.plotly_chart(
                         fig_anomaly,
                         use_container_width=True,
+                        # This key uses anomaly timestamp and current index, so it is safe.
                         key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
                     )
             else:
@@ -548,6 +552,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
             st.plotly_chart(
                 fig_main,
                 use_container_width=True,
+                # This key is safe as it updates with every iteration
                 key=f"tech_main_chart_{st.session_state.current_row_index}",
             )
 
@@ -592,7 +597,13 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                 )
             )
             fig_health.update_layout(height=400)
-            st.plotly_chart(fig_health, use_container_width=True)
+            # --- FIX 2: Added unique key ---
+            st.plotly_chart(
+                fig_health,
+                use_container_width=True,
+                key=f"tech_health_gauge_{st.session_state.current_row_index}",
+            )
+            # -------------------------------
 
 
 def update_dashboard(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, role):
@@ -632,10 +643,8 @@ while st.session_state.current_row_index < len(full_data_df):
         next_row.loc[:, "ML_Anomaly_Score"] = ml_score
         next_row.loc[:, "AI_Confidence"] = ai_confidence
         next_row.loc[:, "RUL_Days"] = rul_days_current
-        # --- NEW Columns for Technician View ---
         next_row.loc[:, "Health_Index"] = health_index_current
         next_row.loc[:, "Predicted_Failure_Mode"] = predicted_failure_mode
-        # ----------------------------------------
 
         st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
         st.session_state.current_row_index += 1
@@ -668,9 +677,8 @@ while st.session_state.current_row_index < len(full_data_df):
 
     except Exception as e:
         st.error(
-            f"Error: The simulation crashed while processing row {st.session_state.current_row_index}."
+            f"Error: The simulation crashed while processing row {st.session_state.current_row_index}. Details: {e}"
         )
-        st.error(f"**Details:** {e}")
         st.warning(
             "The simulation has stopped. Please check your data at this row for any inconsistencies (e.g., missing values, incorrect data types)."
         )
