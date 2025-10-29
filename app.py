@@ -8,26 +8,26 @@ import time
 import os
 
 # --- NEW: Branding and Currency/Localization Constants ---
-LOGO_TEXT = "S.I.L.K.E. AI"
-INDUSTRY_TITLE = "Maize Mill Grinding Line Motor" # Monitoring the main motor/gearbox
-CURRENCY_SYMBOL = "R" # South African Rand
-CURRENCY_FORMAT = "R {:,.0f}" # Format for ZAR without decimal cents
+LOGO_TEXT = "S.I.L.K.E AI"
+INDUSTRY_TITLE = "Maize Mill Grinding Line Motor"  # Monitoring the main motor/gearbox
+CURRENCY_SYMBOL = "R"  # South African Rand
+CURRENCY_FORMAT = "R {:,.0f}"  # Format for ZAR without decimal cents
 
 # --- Configuration ---
 st.set_page_config(layout="wide", page_title=f"{LOGO_TEXT} PdM: {INDUSTRY_TITLE}")
 
-DATA_POINT_INTERVAL = 0.5 
+DATA_POINT_INTERVAL = 0.5
 file_path = "maize_mill_simulated_sensor_data.csv"
 
 # --- Placeholder for industry-specific failure/cost data (for ROI calculation) ---
 FAILURE_COST_DATA = {
     # Conversion approximated for demo: $15,000/hr -> R250,000/hr
-    "Average Downtime Cost per Hour (R)": 250000, 
-    "Time Saved by PdM (Hours)": 4, 
-    "Avg. Repair Cost (Reactive R)": 800000, # Catastrophic failure cost
-    "Avg. Repair Cost (Predictive R)": 150000, # Planned repair cost
+    "Average Downtime Cost per Hour (R)": 250000,
+    "Time Saved by PdM (Hours)": 4,
+    "Avg. Repair Cost (Reactive R)": 800000,  # Catastrophic failure cost
+    "Avg. Repair Cost (Predictive R)": 150000,  # Planned repair cost
     "Equipment Lifespan (Years)": 10,
-    "PdM System Annual Cost (R)": 400000, # Annual investment
+    "PdM System Annual Cost (R)": 400000,  # Annual investment
 }
 
 
@@ -91,7 +91,7 @@ def train_isolation_forest(df_initial):
     X_train = df_initial[features_for_ml].dropna()
     if X_train.empty or len(X_train) < 2:
         return None, None
-    model = IsolationForest(contamination=0.015, random_state=42) 
+    model = IsolationForest(contamination=0.015, random_state=42)
     model.fit(X_train.values)
     return model, features_for_ml
 
@@ -155,22 +155,22 @@ def check_rule_based_anomalies(row):
 def check_ml_anomaly(row, model, features):
     """Applies the Isolation Forest model to a single data row."""
     if model is None or features is None or any(pd.isna(row[features])):
-        return False, 0.0, 0.0, 0 
+        return False, 0.0, 0.0, 0
 
     data_point = np.array([row[features].values])
     ml_prediction = model.predict(data_point)[0]
     ml_score = model.decision_function(data_point)[0]
     is_ml_anomaly = ml_prediction == -1
-    
+
     # Calculate a proxy for AI Confidence and RUL
     if is_ml_anomaly:
-        confidence = min(100, max(50, 50 - (ml_score * 500))) 
+        confidence = min(100, max(50, 50 - (ml_score * 500)))
     else:
-        confidence = 100 - (abs(ml_score) * 200) 
+        confidence = 100 - (abs(ml_score) * 200)
         confidence = max(0, min(100, confidence))
 
     base_rul_days = 30
-    rul_days = max(1, int(base_rul_days + (ml_score * 100))) 
+    rul_days = max(1, int(base_rul_days + (ml_score * 100)))
 
     return is_ml_anomaly, ml_score, confidence, rul_days
 
@@ -178,38 +178,38 @@ def check_ml_anomaly(row, model, features):
 # --- ROI Calculation Function ---
 def calculate_pdm_roi(anomaly_count, cost_data):
     """Calculates ROI metrics based on simulated savings from avoided failures."""
-    
-    critical_failures_avoided = anomaly_count // 5 
-    
+
+    critical_failures_avoided = anomaly_count // 5
+
     if critical_failures_avoided == 0:
         return {
             "Total Savings": 0,
             "Net ROI": 0,
             "ROI Status": "Awaiting critical detection...",
-            "Justification": "No major failure predicted/avoided yet."
+            "Justification": "No major failure predicted/avoided yet.",
         }
-    
+
     # 1. Savings from avoided downtime
     downtime_savings_per_failure = (
-        cost_data["Time Saved by PdM (Hours)"] 
-        * cost_data["Average Downtime Cost per Hour (R)"] # Use ZAR data
+        cost_data["Time Saved by PdM (Hours)"]
+        * cost_data["Average Downtime Cost per Hour (R)"]  # Use ZAR data
     )
     total_downtime_savings = downtime_savings_per_failure * critical_failures_avoided
-    
+
     # 2. Savings from reduced repair costs
     repair_cost_savings_per_failure = (
         cost_data["Avg. Repair Cost (Reactive R)"]
         - cost_data["Avg. Repair Cost (Predictive R)"]
     )
     total_repair_savings = repair_cost_savings_per_failure * critical_failures_avoided
-    
+
     total_savings = total_downtime_savings + total_repair_savings
-    
+
     # Annual Investment Cost (PdM System)
     investment_cost = cost_data["PdM System Annual Cost (R)"]
-    
+
     net_profit = total_savings - investment_cost
-    
+
     if investment_cost > 0:
         net_roi = (net_profit / investment_cost) * 100
     else:
@@ -220,12 +220,12 @@ def calculate_pdm_roi(anomaly_count, cost_data):
         f"- **{CURRENCY_FORMAT.format(total_downtime_savings)}** in potential downtime.\n"
         f"- **{CURRENCY_FORMAT.format(total_repair_savings)}** in reduced repair costs."
     )
-    
+
     return {
         "Total Savings": total_savings,
         "Net ROI": net_roi,
         "ROI Status": f"ROI: {net_roi:,.1f}%",
-        "Justification": justification
+        "Justification": justification,
     }
 
 
@@ -238,26 +238,23 @@ st.write("Live data stream and anomaly detection for critical equipment.")
 # --- Sidebar Content ---
 with st.sidebar:
     # CORRECTION: Added LOGO_TEXT at the top of the sidebar
-    st.header(LOGO_TEXT) 
-    st.markdown("---") # Visual separation after the logo title
+    st.header(LOGO_TEXT)
+    st.markdown("---")  # Visual separation after the logo title
 
     # CORRECTION: Removed emoticon from role selector
-    role = st.radio(
-        "Select User Role:", 
-        ('Plant Manager', 'Technician'), 
-        index=0
-    )
+    role = st.radio("Select User Role:", ("Plant Manager", "Technician"), index=0)
     st.markdown("---")
-    
+
     # CORRECTION: Removed emoticons from sidebar headers
     st.header("Asset Context & Location")
-    st.info(f"""
+    st.info(
+        f"""
     **Asset:** Primary {INDUSTRY_TITLE}
     **Location:** Free State, South Africa
     **Objective:** Predict mechanical or electrical failure 
     using real-time **Vibration, Temperature, Power, and Amperage** data.
-    """)
-    
+    """
+    )
 
     st.markdown("---")
     st.header("Value Proposition Summary")
@@ -275,9 +272,9 @@ with st.sidebar:
 
 
 # Conditional title for the main dashboard
-if role == 'Plant Manager':
+if role == "Plant Manager":
     # CORRECTION: Removed emoticons from header
-    st.header("Executive Financial & Asset Health Overview") 
+    st.header("Executive Financial & Asset Health Overview")
 else:
     # CORRECTION: Removed emoticons from header
     st.header("Technician's Detailed Sensor & AI Diagnostics")
@@ -290,12 +287,12 @@ if "current_df" not in st.session_state:
     initial_row["Is_ML_Anomaly"] = False
     initial_row["Anomaly_Reasoning"] = ""
     initial_row["ML_Anomaly_Score"] = 0.0
-    initial_row["AI_Confidence"] = 0.0 
-    initial_row["RUL_Days"] = 0 
+    initial_row["AI_Confidence"] = 0.0
+    initial_row["RUL_Days"] = 0
     st.session_state.current_df = initial_row
     st.session_state.current_row_index = 1
     st.session_state.anomaly_count = 0
-    st.session_state.rul_days = 30 
+    st.session_state.rul_days = 30
 
 # Create empty placeholders for all dynamic UI elements
 kpi_placeholder = st.empty()
@@ -305,30 +302,40 @@ chart_placeholder = st.empty()
 
 def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     """Updates the dashboard for the Plant Manager (Financial KPIs/ROI)."""
-    
+
     roi_data = calculate_pdm_roi(anomaly_count, FAILURE_COST_DATA)
     latest_row = current_df.iloc[-1]
-    
+
     with kpi_ph.container():
         st.subheader("Financial Performance & Predictive Insights")
-        
+
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-        
+
         # CORRECTION: Removed emoticons from metric labels
-        col_kpi1.metric("Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data['Total Savings']))
-        col_kpi2.metric("Net ROI", f"{roi_data['Net ROI']:,.1f}%", delta=roi_data['ROI Status'])
+        col_kpi1.metric(
+            "Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
+        )
+        col_kpi2.metric(
+            "Net ROI", f"{roi_data['Net ROI']:,.1f}%", delta=roi_data["ROI Status"]
+        )
         col_kpi3.metric("Total Anomalies", anomaly_count)
-        
-        rul_display = f"{st.session_state.rul_days} Days" if st.session_state.rul_days < 30 else "Normal (30+ Days)"
+
+        rul_display = (
+            f"{st.session_state.rul_days} Days"
+            if st.session_state.rul_days < 30
+            else "Normal (30+ Days)"
+        )
         col_kpi4.metric("Predicted RUL", rul_display)
 
     # REFINEMENT: Ensure alert_ph handles the entire alert section, including the header.
     with alert_ph.container():
         st.subheader("ROI Justification & Operational Status")
-        
+
         # Display ROI Justification
-        st.info(f"**Value Proposition:** The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
-                f"{roi_data['Justification']}")
+        st.info(
+            f"**Value Proposition:** The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
+            f"{roi_data['Justification']}"
+        )
 
         # Display a simplified alert message
         if st.session_state.rul_days <= 30 and anomaly_count > 0:
@@ -340,7 +347,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
                 f"CRITICAL ALERT: Potential failure predicted! RUL is **{st.session_state.rul_days} days**."
             )
             st.markdown(
-                 f"**Anomaly Cause:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'AI Detected: Uncategorized Anomaly.'}"
+                f"**Anomaly Cause:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'AI Detected: Uncategorized Anomaly.'}"
             )
         else:
             # CORRECTION: Removed emoticons from st.success
@@ -348,11 +355,14 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
     with chart_placeholder.container():
         st.subheader("Key Sensor Data Trends")
-        df_display = current_df.tail(200) # Show a recent window
+        df_display = current_df.tail(200)  # Show a recent window
         fig_main = px.line(
             df_display,
             x=df_display.index,
-            y=["Power_kW", "Vibration"], # Power and Vibe are key operational indicators
+            y=[
+                "Power_kW",
+                "Vibration",
+            ],  # Power and Vibe are key operational indicators
             labels={"value": "Value", "Timestamp": "Time"},
             title="Recent Power and Vibration Trend",
         )
@@ -362,29 +372,28 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
 def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count):
     """Updates the dashboard for the Technician (Sensor Charts/AI scores)."""
-    
+
     if current_df.empty:
         return
 
     latest_row = current_df.iloc[-1]
-    
+
     with kpi_ph.container():
         st.subheader("Key Sensor Readings & AI Diagnostics")
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-        
+
         col_kpi1.metric("Latest Vibration", f"{latest_row['Vibration']:.2f}g")
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
-        
+
         # CORRECTION: Removed emoticons from metric labels
         col_kpi3.metric("AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
         col_kpi4.metric("RUL (Predicted)", f"{st.session_state.rul_days} Days")
-
 
     # REFINEMENT: Use alert_ph to handle the status alert
     with alert_ph.container():
         # Corrected: Only show a detailed alert if RUL is low (critical)
         if st.session_state.rul_days <= 30 and anomaly_count > 0:
-            
+
             # Find the most recent anomaly that contributed to the low RUL
             anomalies = current_df[
                 (current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"])
@@ -400,10 +409,14 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                 st.markdown(
                     f"**Root Cause Analysis:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
                 )
-                st.markdown(f"**ML Score:** `{last_anomaly['ML_Anomaly_Score']:.4f}` **| AI Confidence:** `{last_anomaly['AI_Confidence']:.1f}%`")
-                
+                st.markdown(
+                    f"**ML Score:** `{last_anomaly['ML_Anomaly_Score']:.4f}` **| AI Confidence:** `{last_anomaly['AI_Confidence']:.1f}%`"
+                )
+
                 # --- Detailed Anomaly Chart (inside expander) ---
-                with st.expander(f"Show Detailed Sensor Readings (2hr window around last critical event)"):
+                with st.expander(
+                    f"Show Detailed Sensor Readings (2hr window around last critical event)"
+                ):
                     df_anomaly_window = current_df.loc[
                         (current_df.index >= last_anomaly.name - pd.Timedelta(hours=2))
                         & (
@@ -434,17 +447,21 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                         key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
                     )
             else:
-                 # CORRECTION: Removed emoticons from st.success
-                 st.success("System Operating Normally - All sensor data within acceptable limits.")
+                # CORRECTION: Removed emoticons from st.success
+                st.success(
+                    "System Operating Normally - All sensor data within acceptable limits."
+                )
 
         else:
             # CORRECTION: Removed emoticons from st.success
-            st.success("System Operating Normally - All sensor data within acceptable limits.")
+            st.success(
+                "System Operating Normally - All sensor data within acceptable limits."
+            )
 
     # --- Full Sensor Chart ---
-    with chart_ph.container(): # Use the allocated placeholder for the main chart
+    with chart_ph.container():  # Use the allocated placeholder for the main chart
         st.subheader("Full History Sensor Data Monitoring")
-        df_display_full = current_df.tail(1000) 
+        df_display_full = current_df.tail(1000)
         fig_main = px.line(
             df_display_full,
             x=df_display_full.index,
@@ -462,9 +479,9 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
 def update_dashboard(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, role):
     """Function to call the appropriate view update function."""
-    if role == 'Plant Manager':
+    if role == "Plant Manager":
         update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count)
-    else: # Technician
+    else:  # Technician
         update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count)
 
 
@@ -474,17 +491,17 @@ while st.session_state.current_row_index < len(full_data_df):
         next_row = full_data_df.iloc[
             st.session_state.current_row_index : st.session_state.current_row_index + 1
         ].copy()
-        
+
         # ADDED FIX: Check if the sliced DataFrame is empty
         if next_row.empty:
             # CORRECTION: Removed emoticons from st.warning
             st.warning("Data stream ended unexpectedly. Exiting simulation.")
-            break 
+            break
 
-        row_to_process = next_row.iloc[0] # Safely get the row
+        row_to_process = next_row.iloc[0]  # Safely get the row
 
         is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row_to_process)
-        is_ml_anomaly, ml_score, ai_confidence, rul_days_current = check_ml_anomaly( 
+        is_ml_anomaly, ml_score, ai_confidence, rul_days_current = check_ml_anomaly(
             row_to_process, iso_forest_model, ml_features
         )
 
@@ -492,18 +509,17 @@ while st.session_state.current_row_index < len(full_data_df):
         next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
         next_row.loc[:, "Anomaly_Reasoning"] = rule_reasoning
         next_row.loc[:, "ML_Anomaly_Score"] = ml_score
-        next_row.loc[:, "AI_Confidence"] = ai_confidence 
-        next_row.loc[:, "RUL_Days"] = rul_days_current 
+        next_row.loc[:, "AI_Confidence"] = ai_confidence
+        next_row.loc[:, "RUL_Days"] = rul_days_current
 
         st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
         st.session_state.current_row_index += 1
-        
+
         if is_rule_anomaly or is_ml_anomaly:
             st.session_state.anomaly_count += 1
             st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
         elif st.session_state.rul_days < 30 and ml_score > 0:
             st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
-
 
         update_dashboard(
             kpi_placeholder,
@@ -511,7 +527,7 @@ while st.session_state.current_row_index < len(full_data_df):
             chart_placeholder,
             st.session_state.current_df,
             st.session_state.anomaly_count,
-            role 
+            role,
         )
 
         time.sleep(DATA_POINT_INTERVAL)
