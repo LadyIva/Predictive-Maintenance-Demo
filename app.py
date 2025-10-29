@@ -434,18 +434,19 @@ with st.sidebar:
                 1
             ).copy()  # Fallback to first row
 
-        # Ensure the new dataframe has the required columns initialized for safety
-        if "Is_Rule_Anomaly" not in st.session_state.current_df.columns:
-            st.session_state.current_df["Is_Rule_Anomaly"] = False
-            st.session_state.current_df["Is_ML_Anomaly"] = False
-            st.session_state.current_df["Anomaly_Reasoning"] = ""
-            st.session_state.current_df["ML_Anomaly_Score"] = 0.0
-            st.session_state.current_df["AI_Confidence"] = 0.0
-            st.session_state.current_df["RUL_Days"] = 30
-            st.session_state.current_df["Health_Index"] = 100
-            st.session_state.current_df["Predicted_Failure_Mode"] = (
-                FAILURE_MODES_MAPPING["E"]
-            )
+        # --- FIX: Unconditionally reset all dynamic columns on the single-row starter DF ---
+        # This is CRITICAL to ensure the DF schema is correct for concatenation when the stream restarts.
+        st.session_state.current_df["Is_Rule_Anomaly"] = False
+        st.session_state.current_df["Is_ML_Anomaly"] = False
+        st.session_state.current_df["Anomaly_Reasoning"] = ""
+        st.session_state.current_df["ML_Anomaly_Score"] = 0.0
+        st.session_state.current_df["AI_Confidence"] = 0.0
+        st.session_state.current_df["RUL_Days"] = 30
+        st.session_state.current_df["Health_Index"] = 100
+        st.session_state.current_df["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING[
+            "E"
+        ]
+        # --- END FIX ---
 
         # Stop the current iteration and force rerun with the new state
         st.rerun()
@@ -500,7 +501,12 @@ with st.sidebar:
         # Clear the session state to reset the simulation completely
         keys_to_delete = list(st.session_state.keys())
         for key in keys_to_delete:
+            del key  # Use del key instead of del st.session_state[key] due to potential side effects in iteration.
+
+        # Correctly iterate and delete keys:
+        for key in list(st.session_state.keys()):
             del st.session_state[key]
+
         st.cache_data.clear()
         st.cache_resource.clear()
         st.rerun()
@@ -833,7 +839,6 @@ def update_technician_view(content_ph, current_df, anomaly_count):
         st.plotly_chart(
             fig_main,
             use_container_width=True,
-            # Key is safe as it updates with every iteration
             key=f"tech_main_chart_{st.session_state.current_row_index}_v{st.session_state.rul_days}",
         )
 
