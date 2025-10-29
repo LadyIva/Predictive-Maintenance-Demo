@@ -17,7 +17,7 @@ FAILURE_MODES_MAPPING = {
 }
 
 # --- NEW: Branding and Currency/Localization Constants ---
-LOGO_TEXT = "S.I.L.K.E AI"
+LOGO_TEXT = "S.I.L.K.E. AI"
 INDUSTRY_TITLE = "Maize Mill Grinding Line Motor"  # Monitoring the main motor/gearbox
 CURRENCY_SYMBOL = "R"  # South African Rand
 CURRENCY_FORMAT = "R {:,.0f}"  # Format for ZAR without decimal cents
@@ -416,7 +416,7 @@ st.title(INDUSTRY_TITLE)
 st.write("Live data stream and anomaly detection for critical equipment.")
 
 
-# --- Timestamp Formatting Function for Slider ---
+# --- Timestamp Formatting Function for Slider (No longer used by slider, but kept for context) ---
 def format_slider_index_to_time(index):
     # Ensure index is within bounds
     index = int(index)
@@ -432,18 +432,18 @@ with st.sidebar:
     st.header(LOGO_TEXT)
     st.markdown("---")
 
-    # --- NEW: Fast Forward Data Stream Slider ---
+    # --- NEW: Fast Forward Data Stream Slider (format_func removed) ---
     st.subheader("Simulation Control")
 
     # The slider value controls the starting index for the stream
+    # format_func is removed to fix the TypeError
     new_index_value = st.slider(
-        "Fast Forward Data Stream (Select Start Time)",
+        "Fast Forward Data Stream (Select Data Point Index)",
         min_value=0,
         max_value=MAX_DATA_INDEX,
         value=st.session_state.current_row_index,
-        format_func=format_slider_index_to_time,
         key="fast_forward_slider",
-        help="Use this to skip forward to a specific time in the data for analysis.",
+        help="Use this to skip forward to a specific data point (row index) in the data. The simulation will resume from that point.",
     )
 
     # Logic to handle the jump/reset
@@ -671,6 +671,20 @@ def update_plant_manager_view(content_ph, current_df, anomaly_count):
             key=f"pm_main_chart_{st.session_state.current_row_index}_v{rul_days}",
         )
         # -------------------------------
+
+
+def get_maintenance_recommendation(predicted_mode):
+    """Provides a specific recommendation based on the predicted failure mode."""
+    if predicted_mode == FAILURE_MODES_MAPPING["A"]:
+        return "Inspect bearings on the Non-Drive End (NDE). Check for lubrication breakdown and excessive heat. Schedule immediate replacement or re-lubrication."
+    elif predicted_mode == FAILURE_MODES_MAPPING["B"]:
+        return "Perform laser alignment check and dynamic balance test on the motor/gearbox coupling. Correct any detected misalignment or imbalance."
+    elif predicted_mode == FAILURE_MODES_MAPPING["C"]:
+        return "Perform motor winding insulation test (Megger test) and check for loose connections in the terminal box. Inspect VFD output."
+    elif predicted_mode == FAILURE_MODES_MAPPING["D"]:
+        return "Check gearbox oil level, quality, and contamination (oil analysis). Top up or replace fluid immediately."
+    else:
+        return "Review sensor data trends. Monitor for continued degradation of Health Index. A specific failure mode has not been definitively identified yet."
 
 
 def update_technician_view(content_ph, current_df, anomaly_count):
