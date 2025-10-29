@@ -14,8 +14,7 @@ CURRENCY_SYMBOL = "R"  # South African Rand
 CURRENCY_FORMAT = "R {:,.0f}"  # Format for ZAR without decimal cents
 
 # --- Configuration ---
-# CHANGE 2: Simplified page title
-st.set_page_config(layout="wide", page_title=INDUSTRY_TITLE)
+st.set_page_config(layout="wide", page_title=f"{LOGO_TEXT} PdM: {INDUSTRY_TITLE}")
 
 DATA_POINT_INTERVAL = 0.5
 file_path = "maize_mill_simulated_sensor_data.csv"
@@ -231,24 +230,53 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
-# Title is now composed of LOGO_TEXT and INDUSTRY_TITLE, but the page title is just INDUSTRY_TITLE
-st.title(f"{LOGO_TEXT} Predictive Maintenance Demo: {INDUSTRY_TITLE}")
+
+# CORRECTION: st.title changed to only include INDUSTRY_TITLE
+st.title(INDUSTRY_TITLE)
 st.write("Live data stream and anomaly detection for critical equipment.")
 
-# --- Role Selector ---
-# CHANGE 1: Added Logo Text to the top of the sidebar
+# --- Sidebar Content ---
 with st.sidebar:
-    st.title(LOGO_TEXT)
+    # CORRECTION: Added LOGO_TEXT at the top of the sidebar
+    st.header(LOGO_TEXT)
+    st.markdown("---")  # Visual separation after the logo title
+
+    # CORRECTION: Removed emoticon from role selector
     role = st.radio("Select User Role:", ("Plant Manager", "Technician"), index=0)
     st.markdown("---")
+
+    # CORRECTION: Removed emoticons from sidebar headers
+    st.header("Asset Context & Location")
+    st.info(
+        f"""
+    **Asset:** Primary {INDUSTRY_TITLE}
+    **Location:** Free State, South Africa
+    **Objective:** Predict mechanical or electrical failure 
+    using real-time **Vibration, Temperature, Power, and Amperage** data.
+    """
+    )
+
+    st.markdown("---")
+    st.header("Value Proposition Summary")
+
+    st.markdown(
+        """
+    Our solution provides **Actionable Intelligence** by:
+    -   **Maximizing Uptime:** Predicting RUL (Remaining Useful Life) for proactive scheduling.
+    -   **Quantifiable ROI:** Tracking and justifying savings by avoiding catastrophic failures.
+    -   **Optimizing Energy:** Identifying operational inefficiencies via Power/Amperage anomalies.
+    """
+    )
+    st.markdown("---")
+    st.caption(f"Powered by {LOGO_TEXT} in the Free State.")
 
 
 # Conditional title for the main dashboard
 if role == "Plant Manager":
-    # CHANGE 3: Removed emoticon
+    # CORRECTION: Removed emoticons from header
     st.header("Executive Financial & Asset Health Overview")
 else:
-    # CHANGE 3: Removed emoticons
+    # CORRECTION: Removed emoticons from header
     st.header("Technician's Detailed Sensor & AI Diagnostics")
 
 
@@ -283,7 +311,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-        # CHANGE 3: Removed emoticons from metric titles
+        # CORRECTION: Removed emoticons from metric labels
         col_kpi1.metric(
             "Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
         )
@@ -302,16 +330,18 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     with alert_ph.container():
         st.subheader("ROI Justification & Operational Status")
 
+        # Display ROI Justification
         st.info(
-            f"Value Proposition: The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
+            f"**Value Proposition:** The PdM system has delivered significant savings by preemptively identifying maintenance needs.\n\n"
             f"{roi_data['Justification']}"
         )
 
-        if st.session_state.rul_days <= 30:
+        # Display a simplified alert message
+        if st.session_state.rul_days <= 30 and anomaly_count > 0:
             last_anomaly = current_df[
                 current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
             ].iloc[-1]
-            # CHANGE 3: Removed emoticon
+            # CORRECTION: Removed emoticons from st.error and st.markdown
             st.error(
                 f"CRITICAL ALERT: Potential failure predicted! RUL is **{st.session_state.rul_days} days**."
             )
@@ -319,16 +349,19 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
                 f"**Anomaly Cause:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'AI Detected: Uncategorized Anomaly.'}"
             )
         else:
-            # CHANGE 3: Removed emoticon
+            # CORRECTION: Removed emoticons from st.success
             st.success("System Health: Excellent. No immediate financial risk.")
 
     with chart_placeholder.container():
         st.subheader("Key Sensor Data Trends")
-        df_display = current_df.tail(200)
+        df_display = current_df.tail(200)  # Show a recent window
         fig_main = px.line(
             df_display,
             x=df_display.index,
-            y=["Power_kW", "Vibration"],
+            y=[
+                "Power_kW",
+                "Vibration",
+            ],  # Power and Vibe are key operational indicators
             labels={"value": "Value", "Timestamp": "Time"},
             title="Recent Power and Vibration Trend",
         )
@@ -351,13 +384,15 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         col_kpi1.metric("Latest Vibration", f"{latest_row['Vibration']:.2f}g")
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
-        # CHANGE 3: Removed emoticons from metric titles
+        # CORRECTION: Removed emoticons from metric labels
         col_kpi3.metric("AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
         col_kpi4.metric("RUL (Predicted)", f"{st.session_state.rul_days} Days")
 
     with alert_ph.container():
+        # Corrected: Only show a detailed alert if RUL is low (critical)
         if st.session_state.rul_days <= 30 and anomaly_count > 0:
 
+            # Find the most recent anomaly that contributed to the low RUL
             anomalies = current_df[
                 (current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"])
                 & (current_df["RUL_Days"] <= st.session_state.rul_days + 1)
@@ -365,7 +400,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
             if not anomalies.empty:
                 last_anomaly = anomalies.iloc[-1]
-                # CHANGE 3: Removed emoticon
+                # CORRECTION: Removed emoticons from st.error
                 st.error(
                     f"IMMEDIATE ACTION REQUIRED: Failure predicted in **{st.session_state.rul_days} days**."
                 )
@@ -410,13 +445,13 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                         key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
                     )
             else:
-                # CHANGE 3: Removed emoticon
+                # CORRECTION: Removed emoticons from st.success
                 st.success(
                     "System Operating Normally - All sensor data within acceptable limits."
                 )
 
         else:
-            # CHANGE 3: Removed emoticon
+            # CORRECTION: Removed emoticons from st.success
             st.success(
                 "System Operating Normally - All sensor data within acceptable limits."
             )
@@ -455,8 +490,9 @@ while st.session_state.current_row_index < len(full_data_df):
             st.session_state.current_row_index : st.session_state.current_row_index + 1
         ].copy()
 
-        # FIX: Check if the sliced DataFrame is empty
+        # ADDED FIX: Check if the sliced DataFrame is empty
         if next_row.empty:
+            # CORRECTION: Removed emoticons from st.warning
             st.warning("Data stream ended unexpectedly. Exiting simulation.")
             break
 
@@ -495,6 +531,7 @@ while st.session_state.current_row_index < len(full_data_df):
         time.sleep(DATA_POINT_INTERVAL)
 
     except Exception as e:
+        # CORRECTION: Removed emoticons from st.error
         st.error(
             f"Error: The simulation crashed while processing row {st.session_state.current_row_index}."
         )
