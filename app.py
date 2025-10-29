@@ -41,8 +41,6 @@ FAILURE_COST_DATA = {
 
 
 # --- 1. Load Data and Initialize Models ---
-# Caching decorators have been removed to comply with the request to "disable caching."
-# WARNING: This will cause the functions to re-execute on every user interaction, potentially impacting performance.
 def load_data(file_path):
     try:
         if not os.path.exists(file_path):
@@ -107,6 +105,27 @@ def train_isolation_forest(df_initial):
 
 # Global data and model initialization
 full_data_df = load_data(file_path)
+
+# --- NEW: Date-to-Index Mapping for Simulation Speed Control ---
+# Map key dates to the index of the first data point on that date
+DATE_TO_INDEX_MAP = {
+    "Start (Aug 1)": full_data_df.index.searchsorted(
+        pd.to_datetime("2024-08-01 00:00:00")
+    )[0],
+    "Anomaly D (Aug 10)": full_data_df.index.searchsorted(
+        pd.to_datetime("2024-08-10 00:00:00")
+    )[0],
+    "Anomaly C (Aug 25)": full_data_df.index.searchsorted(
+        pd.to_datetime("2024-08-25 00:00:00")
+    )[0],
+    "Anomaly B (Sep 5)": full_data_df.index.searchsorted(
+        pd.to_datetime("2024-09-05 00:00:00")
+    )[0],
+    "Anomaly A (Sep 20)": full_data_df.index.searchsorted(
+        pd.to_datetime("2024-09-20 00:00:00")
+    )[0],
+}
+# ----------------------------------------------------------------
 
 try:
     # We still only train the model on the first 1000 rows as intended.
@@ -333,30 +352,106 @@ def get_maintenance_schedule(rul_days, current_timestamp):
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
 
-st.title(INDUSTRY_TITLE)
-st.write("Live data stream and anomaly detection for critical equipment.")
+
+# --- Initial Setup ---
+# Find the default starting index (Aug 1st)
+default_start_date_label = "Start (Aug 1)"
+default_start_index = DATE_TO_INDEX_MAP.get(default_start_date_label, 0)
 
 # Initialize session state for simulation
 if "current_df" not in st.session_state:
-    initial_row = full_data_df.head(1).copy()
+    # Initialize the DataFrame with data up to the selected start point
+    initial_data = full_data_df.iloc[:default_start_index].copy()
+
+    # If no data before start index, use the first row and default to 0 index
+    if initial_data.empty:
+        initial_row = full_data_df.head(1).copy()
+        start_index_for_loop = 1
+    else:
+        initial_row = initial_data.iloc[-1:].copy()
+        start_index_for_loop = default_start_index
+
+    # Ensure initial columns exist
     initial_row["Is_Rule_Anomaly"] = False
     initial_row["Is_ML_Anomaly"] = False
     initial_row["Anomaly_Reasoning"] = ""
     initial_row["ML_Anomaly_Score"] = 0.0
     initial_row["AI_Confidence"] = 0.0
-    initial_row["RUL_Days"] = 0
+    initial_row["RUL_Days"] = 30  # Default to 30 days for new start
     initial_row["Health_Index"] = 100
     initial_row["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
+
     st.session_state.current_df = initial_row
-    st.session_state.current_row_index = 1
+    st.session_state.current_row_index = (
+        start_index_for_loop  # Start the loop from the selected index
+    )
     st.session_state.anomaly_count = 0
     st.session_state.rul_days = 30
-    st.session_state.health_index = 100  # Track the current global health index
+    st.session_state.health_index = 100
+    st.session_state.selected_start_date_label = default_start_date_label
+
+st.title(INDUSTRY_TITLE)
+st.write("Live data stream and anomaly detection for critical equipment.")
+
 
 # --- Sidebar Content ---
 with st.sidebar:
     st.header(LOGO_TEXT)
     st.markdown("---")
+
+    # --- NEW: Simulation Speed Slider ---
+    st.subheader("Simulation Control")
+
+    # The list of keys for the slider
+    date_options = list(DATE_TO_INDEX_MAP.keys())
+
+    # Use st.select_slider for an aesthetically pleasing range selector
+    selected_date_label = st.select_slider(
+        "Simulation Speed Jump (Select Date to Start From)",
+        options=date_options,
+        value=st.session_state.selected_start_date_label,
+        key="simulation_speed_slider",
+    )
+
+    # Check if the selection changed
+    if selected_date_label != st.session_state.selected_start_date_label:
+        # Trigger a full reset and restart the simulation at the new index
+        new_start_index = DATE_TO_INDEX_MAP[selected_date_label]
+
+        # Reset relevant session state variables
+        st.session_state.current_row_index = new_start_index
+        st.session_state.anomaly_count = 0
+        st.session_state.rul_days = 30
+        st.session_state.health_index = 100
+        st.session_state.selected_start_date_label = selected_date_label
+
+        # Re-initialize the current_df up to the new start point
+        initial_data_new = full_data_df.iloc[:new_start_index].copy()
+        if not initial_data_new.empty:
+            st.session_state.current_df = initial_data_new.iloc[-1:].copy()
+        else:
+            st.session_state.current_df = full_data_df.head(
+                1
+            ).copy()  # Fallback to first row
+
+        # Ensure the new dataframe has the required columns initialized for safety
+        if "Is_Rule_Anomaly" not in st.session_state.current_df.columns:
+            st.session_state.current_df["Is_Rule_Anomaly"] = False
+            st.session_state.current_df["Is_ML_Anomaly"] = False
+            st.session_state.current_df["Anomaly_Reasoning"] = ""
+            st.session_state.current_df["ML_Anomaly_Score"] = 0.0
+            st.session_state.current_df["AI_Confidence"] = 0.0
+            st.session_state.current_df["RUL_Days"] = 30
+            st.session_state.current_df["Health_Index"] = 100
+            st.session_state.current_df["Predicted_Failure_Mode"] = (
+                FAILURE_MODES_MAPPING["E"]
+            )
+
+        # Stop the current iteration and force rerun with the new state
+        st.rerun()
+
+    st.markdown("---")
+    # --- END NEW: Simulation Speed Slider ---
 
     # We need to ensure the radio button value is consistent across reruns
     if "selected_role" not in st.session_state:
@@ -422,8 +517,8 @@ else:
     st.header("Technician's Detailed Sensor & AI Diagnostics")
 
 
-# Create empty placeholders for all dynamic UI elements
-# Using a single parent placeholder for all dynamic content is often the best way to prevent CLS
+# Create empty placeholder for all dynamic UI elements
+# We wrap the main content in a container with a dynamic key for stability
 main_content_placeholder = st.empty()
 
 
@@ -437,7 +532,11 @@ def get_financial_risk_level(rul_days, anomaly_count, cost_at_risk):
     )
 
     if anomaly_count == 0:
-        return risk_level, risk_color, risk_summary
+        # If we have jumped to a failure date but anomaly count is 0, still use RUL/HI
+        if st.session_state.health_index < 100:
+            pass  # allow RUL logic below to take over
+        else:
+            return risk_level, risk_color, risk_summary
 
     if rul_days <= 10:
         # High Risk: Imminent failure (1-10 days RUL)
@@ -467,7 +566,10 @@ def update_plant_manager_view(content_ph, current_df, anomaly_count):
     content_ph.empty()
 
     # 2. Draw all content inside the placeholder's context
-    with content_ph.container():
+    # Wrapping in a container with a key specific to the role and the index ensures layout stability
+    with content_ph.container(
+        key=f"pm_view_container_{st.session_state.current_row_index}"
+    ):
 
         roi_data = calculate_pdm_roi(anomaly_count, FAILURE_COST_DATA)
         cost_at_risk = roi_data["Potential Downtime Cost"]
@@ -599,7 +701,11 @@ def update_technician_view(content_ph, current_df, anomaly_count):
 
     latest_row = current_df.iloc[-1]
 
-    with content_ph.container():
+    # Wrapping in a container with a key specific to the role and the index ensures layout stability
+    with content_ph.container(
+        key=f"tech_view_container_{st.session_state.current_row_index}"
+    ):
+
         # --- KPI Section ---
         st.subheader("Key Sensor Readings & AI Diagnostics")
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
@@ -638,6 +744,7 @@ def update_technician_view(content_ph, current_df, anomaly_count):
             ]
 
             if not anomalies.empty:
+                # We need the last anomaly *before* the current row to be reflective of the warning
                 last_anomaly = anomalies.iloc[-1]
 
                 # --- Predicted Failure Mode and Action ---
@@ -782,74 +889,94 @@ def update_dashboard(content_ph, current_df, anomaly_count, role):
 
 
 # The continuous simulation loop
-while st.session_state.current_row_index < len(full_data_df):
-    try:
-        next_row = full_data_df.iloc[
-            st.session_state.current_row_index : st.session_state.current_row_index + 1
-        ].copy()
+# We only enter this loop if the index is less than the total data length.
+if st.session_state.current_row_index < len(full_data_df):
 
-        if next_row.empty:
-            st.warning("Data stream ended unexpectedly. Exiting simulation.")
+    # Force the first render right away to show the selected starting point
+    update_dashboard(
+        main_content_placeholder,
+        st.session_state.current_df,
+        st.session_state.anomaly_count,
+        st.session_state.selected_role,
+    )
+
+    # Start the continuous stream from the current index
+    while st.session_state.current_row_index < len(full_data_df):
+        try:
+            next_row = full_data_df.iloc[
+                st.session_state.current_row_index : st.session_state.current_row_index
+                + 1
+            ].copy()
+
+            if next_row.empty:
+                st.info("Data stream ended naturally.")
+                break
+
+            row_to_process = next_row.iloc[0]  # Safely get the row
+
+            # --- Anomaly Logic ---
+            is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row_to_process)
+            (
+                is_ml_anomaly,
+                ml_score,
+                ai_confidence,
+                rul_days_current,
+                health_index_current,
+                predicted_failure_mode,
+            ) = check_ml_anomaly(row_to_process, iso_forest_model, ml_features)
+
+            # --- Append Anomaly Data to the new row ---
+            next_row.loc[:, "Is_Rule_Anomaly"] = is_rule_anomaly
+            next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
+            next_row.loc[:, "Anomaly_Reasoning"] = rule_reasoning
+            next_row.loc[:, "ML_Anomaly_Score"] = ml_score
+            next_row.loc[:, "AI_Confidence"] = ai_confidence
+            next_row.loc[:, "RUL_Days"] = rul_days_current
+            next_row.loc[:, "Health_Index"] = health_index_current
+            next_row.loc[:, "Predicted_Failure_Mode"] = predicted_failure_mode
+
+            st.session_state.current_df = pd.concat(
+                [st.session_state.current_df, next_row]
+            )
+            st.session_state.current_row_index += 1
+
+            # --- Update Global State (RUL/HI) ---
+            if is_rule_anomaly or is_ml_anomaly:
+                st.session_state.anomaly_count += 1
+                st.session_state.rul_days = min(
+                    st.session_state.rul_days, rul_days_current
+                )
+                st.session_state.health_index = min(
+                    st.session_state.health_index, health_index_current
+                )
+            elif st.session_state.rul_days < 30 and ml_score > 0:
+                # If system recovers, RUL and HI should slowly improve
+                st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
+                st.session_state.health_index = min(
+                    100, st.session_state.health_index + 3
+                )  # Slowly improve HI
+            # ---------------------------
+
+            # Pass the single main placeholder
+            update_dashboard(
+                main_content_placeholder,
+                st.session_state.current_df,
+                st.session_state.anomaly_count,
+                st.session_state.selected_role,  # Use the role from session state
+            )
+
+            time.sleep(DATA_POINT_INTERVAL)
+
+        except Exception as e:
+            st.error(
+                f"Error: The simulation crashed while processing row {st.session_state.current_row_index}. Details: {e}"
+            )
+            st.warning(
+                "The simulation has stopped. Please check your data at this row for any inconsistencies (e.g., missing values, incorrect data types)."
+            )
+            # Break the loop on error
             break
 
-        row_to_process = next_row.iloc[0]  # Safely get the row
-
-        is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row_to_process)
-        (
-            is_ml_anomaly,
-            ml_score,
-            ai_confidence,
-            rul_days_current,
-            health_index_current,
-            predicted_failure_mode,
-        ) = check_ml_anomaly(row_to_process, iso_forest_model, ml_features)
-
-        next_row.loc[:, "Is_Rule_Anomaly"] = is_rule_anomaly
-        next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
-        next_row.loc[:, "Anomaly_Reasoning"] = rule_reasoning
-        next_row.loc[:, "ML_Anomaly_Score"] = ml_score
-        next_row.loc[:, "AI_Confidence"] = ai_confidence
-        next_row.loc[:, "RUL_Days"] = rul_days_current
-        next_row.loc[:, "Health_Index"] = health_index_current
-        next_row.loc[:, "Predicted_Failure_Mode"] = predicted_failure_mode
-
-        st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
-        st.session_state.current_row_index += 1
-
-        # --- Update Global State ---
-        if is_rule_anomaly or is_ml_anomaly:
-            st.session_state.anomaly_count += 1
-            st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
-            st.session_state.health_index = min(
-                st.session_state.health_index, health_index_current
-            )
-        elif st.session_state.rul_days < 30 and ml_score > 0:
-            # If system recovers, RUL and HI should slowly improve
-            st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
-            st.session_state.health_index = min(
-                100, st.session_state.health_index + 3
-            )  # Slowly improve HI
-        # ---------------------------
-
-        # Pass the single main placeholder
-        update_dashboard(
-            main_content_placeholder,
-            st.session_state.current_df,
-            st.session_state.anomaly_count,
-            st.session_state.selected_role,  # Use the role from session state
-        )
-
-        time.sleep(DATA_POINT_INTERVAL)
-
-    except Exception as e:
-        st.error(
-            f"Error: The simulation crashed while processing row {st.session_state.current_row_index}. Details: {e}"
-        )
-        st.warning(
-            "The simulation has stopped. Please check your data at this row for any inconsistencies (e.g., missing values, incorrect data types)."
-        )
-        st.stop()
-
-# Final status message after the loop
+# Final status message after the loop finishes
 if st.session_state.current_row_index >= len(full_data_df):
     st.info("End of simulation. All data has been processed.")
