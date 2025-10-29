@@ -17,7 +17,7 @@ FAILURE_MODES_MAPPING = {
 }
 
 # --- NEW: Branding and Currency/Localization Constants ---
-LOGO_TEXT = "S.I.L.K.E AI"
+LOGO_TEXT = "S.I.L.K.E. AI"
 INDUSTRY_TITLE = "Maize Mill Grinding Line Motor"  # Monitoring the main motor/gearbox
 CURRENCY_SYMBOL = "R"  # South African Rand
 CURRENCY_FORMAT = "R {:,.0f}"  # Format for ZAR without decimal cents
@@ -432,7 +432,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             title="Recent Power and Vibration Trend",
         )
         fig_main.update_layout(height=400, xaxis_title="Timestamp")
-        # --- FIX 1: Added unique key ---
+        # Ensure unique key for the main chart
         st.plotly_chart(
             fig_main,
             use_container_width=True,
@@ -456,7 +456,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         col_kpi1.metric("Latest Vibration", f"{latest_row['Vibration']:.2f}g")
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
-        # --- NEW KPI: Health Index ---
+        # --- KPI: Health Index ---
         health_delta_value = st.session_state.current_df["Health_Index"].diff().iloc[-1]
         health_delta = (
             f"{health_delta_value:.1f}" if not pd.isna(health_delta_value) else None
@@ -482,7 +482,7 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
             if not anomalies.empty:
                 last_anomaly = anomalies.iloc[-1]
 
-                # --- NEW: Predicted Failure Mode in Alert ---
+                # --- Predicted Failure Mode and Action ---
                 predicted_mode = last_anomaly["Predicted_Failure_Mode"]
                 recommended_action = get_maintenance_recommendation(predicted_mode)
 
@@ -495,7 +495,6 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                     unsafe_allow_html=True,
                 )
 
-                # --- NEW: Recommended Action in Alert ---
                 st.markdown(
                     f"**RECOMMENDED ACTION:** <span style='color: #FF4B4B; font-weight: bold;'>{recommended_action}</span>",
                     unsafe_allow_html=True,
@@ -555,75 +554,24 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
     # --- Charts Section ---
     with chart_ph.container():  # Use the allocated placeholder for the main chart
-        col_chart_1, col_chart_2 = st.columns([2, 1])
 
-        # Chart 1: Full Sensor Data Monitoring
-        with col_chart_1:
-            st.subheader("Full History Sensor Data Monitoring")
-            df_display_full = current_df.tail(1000)
-            fig_main = px.line(
-                df_display_full,
-                x=df_display_full.index,
-                y=["Power_kW", "Amperage", "Vibration", "Temperature"],
-                labels={"value": "Value", "Timestamp": "Time"},
-                title="Live Sensor Data Stream (Last 1000 Points)",
-            )
-            fig_main.update_layout(height=400, xaxis_title="Timestamp")
-            st.plotly_chart(
-                fig_main,
-                use_container_width=True,
-                # This key is safe as it updates with every iteration
-                key=f"tech_main_chart_{st.session_state.current_row_index}",
-            )
-
-        # Chart 2: Health Index Gauge
-        with col_chart_2:
-            st.subheader("Asset Health Index Trend")
-            df_health_trend = current_df.copy()
-            df_health_trend = df_health_trend[df_health_trend["Health_Index"] > 0]
-
-            fig_health = go.Figure(
-                go.Indicator(
-                    mode="gauge+number+delta",
-                    value=st.session_state.health_index,
-                    domain={"x": [0, 1], "y": [0, 1]},
-                    title={"text": "Current Health Score"},
-                    delta={
-                        "reference": 100,
-                        "increasing": {"color": "#009900"},
-                        "decreasing": {"color": "#FF4B4B"},
-                    },
-                    gauge={
-                        "axis": {
-                            "range": [0, 100],
-                            "tickwidth": 1,
-                            "tickcolor": "darkblue",
-                        },
-                        "bar": {"color": "darkblue"},
-                        "bgcolor": "white",
-                        "borderwidth": 2,
-                        "bordercolor": "gray",
-                        "steps": [
-                            {"range": [0, 25], "color": "red"},
-                            {"range": [25, 75], "color": "yellow"},
-                            {"range": [75, 100], "color": "green"},
-                        ],
-                        "threshold": {
-                            "line": {"color": "red", "width": 4},
-                            "thickness": 0.75,
-                            "value": 25,
-                        },
-                    },
-                )
-            )
-            fig_health.update_layout(height=400)
-            # --- FIX 2: Added unique key ---
-            st.plotly_chart(
-                fig_health,
-                use_container_width=True,
-                key=f"tech_health_gauge_{st.session_state.current_row_index}",
-            )
-            # -------------------------------
+        # Chart 1: Full Sensor Data Monitoring (Now full width)
+        st.subheader("Full History Sensor Data Monitoring")
+        df_display_full = current_df.tail(1000)
+        fig_main = px.line(
+            df_display_full,
+            x=df_display_full.index,
+            y=["Power_kW", "Amperage", "Vibration", "Temperature"],
+            labels={"value": "Value", "Timestamp": "Time"},
+            title="Live Sensor Data Stream (Last 1000 Points)",
+        )
+        fig_main.update_layout(height=400, xaxis_title="Timestamp")
+        st.plotly_chart(
+            fig_main,
+            use_container_width=True,
+            # This key is safe as it updates with every iteration
+            key=f"tech_main_chart_{st.session_state.current_row_index}",
+        )
 
         # --- NEW CHART: Failure Mode Breakdown ---
         st.markdown("---")
