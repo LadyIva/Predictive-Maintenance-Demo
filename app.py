@@ -449,8 +449,9 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     with kpi_ph.container():
         st.subheader("Financial Performance & Predictive Insights")
 
-        # Expanded to 5 columns for new KPI
-        col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
+        # FIX: Use explicit widths to better align and size the metrics, preventing truncation.
+        # Ratio [3, 3, 2, 2, 3] gives more space to currency/risk metrics.
+        col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns([3, 3, 2, 2, 3])
 
         col_kpi1.metric(
             "Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
@@ -460,7 +461,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         )
         col_kpi3.metric("Total Anomalies", anomaly_count)
 
-        # --- NEW ADDON KPI: Asset Health Rank ---
+        # --- Asset Health Rank ---
         # Simulate a ranking based on Health Index
         if st.session_state.health_index > 80:
             asset_rank = "1/12 (Best)"
@@ -477,7 +478,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             asset_rank,
             delta=f"HI: {st.session_state.health_index}%",
         )
-        # -----------------------------------------
+        # -------------------------
 
         if risk_color == "red":
             st_color = "🔥"  # Use an emoji for high impact
@@ -486,6 +487,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         else:
             st_color = "✅"
 
+        # FIX: The dedicated column width should now prevent truncation of the risk level text.
         col_kpi5.metric(
             "Financial Risk Level",
             f"{st_color} {risk_level}",
@@ -510,7 +512,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
         st.markdown("---")
 
-        # --- NEW ADDON: Maintenance Schedule Forecast ---
+        # --- Maintenance Schedule Forecast ---
         st.markdown(f"🗓️ **Proactive Maintenance Schedule Forecast**")
         if risk_color in ["red", "orange"]:
             st.markdown(
