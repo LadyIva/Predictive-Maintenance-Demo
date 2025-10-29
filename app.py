@@ -7,6 +7,15 @@ import plotly.express as px
 import time
 import os
 
+# --- NEW: Failure Mode Definitions and Constants ---
+FAILURE_MODES_MAPPING = {
+    "A": "Inner Race Bearing Failure (NDE)",  # High Vibe & High Temp (Friction/Wear)
+    "B": "Misalignment or Imbalance",  # High Vibe & Normal Temp (Mechanical Stress)
+    "C": "Electrical Winding Fault",  # High Amperage/Power Spike (Electrical)
+    "D": "Oil Contamination/Loss",  # Gradual Temp Rise (Lubrication/Cooling)
+    "E": "Normal Operation",
+}
+
 # --- NEW: Branding and Currency/Localization Constants ---
 LOGO_TEXT = "S.I.L.K.E AI"
 INDUSTRY_TITLE = "Maize Mill Grinding Line Motor"  # Monitoring the main motor/gearbox
@@ -152,10 +161,47 @@ def check_rule_based_anomalies(row):
     return is_rule_anomaly, reasoning.strip()
 
 
+def determine_failure_mode(row, rule_anomaly, ml_anomaly):
+    """
+    Simulates a classifier to determine the most probable failure mode
+    based on sensor patterns when an anomaly is detected.
+    """
+    vibe = row["Vibration"]
+    temp = row["Temperature"]
+    amp = row["Amperage"]
+
+    # Thresholds (Simulated)
+    HIGH_VIBE = 6.0
+    HIGH_TEMP = 70.0
+    SPIKE_AMP = 65.0
+
+    if not rule_anomaly and not ml_anomaly:
+        return FAILURE_MODES_MAPPING["E"]  # Normal Operation
+
+    # 1. High Vibe & High Temp (Likely Bearing/Friction Failure)
+    if vibe >= HIGH_VIBE and temp >= HIGH_TEMP:
+        return FAILURE_MODES_MAPPING["A"]
+
+    # 2. High Vibe & Normal Temp (Likely Imbalance/Misalignment)
+    if vibe >= HIGH_VIBE and temp < HIGH_TEMP:
+        return FAILURE_MODES_MAPPING["B"]
+
+    # 3. Electrical Anomaly (High Amp/Power Spike)
+    if amp >= SPIKE_AMP:
+        return FAILURE_MODES_MAPPING["C"]
+
+    # 4. Catch-all for gradual or uncategorized (e.g., fluid/lubrication issue)
+    if temp >= 65.0:
+        return FAILURE_MODES_MAPPING["D"]
+
+    return FAILURE_MODES_MAPPING["E"]  # Default fallback if thresholds aren't met yet
+
+
 def check_ml_anomaly(row, model, features):
-    """Applies the Isolation Forest model to a single data row."""
+    """Applies the Isolation Forest model to a single data row and calculates HI/RUL."""
     if model is None or features is None or any(pd.isna(row[features])):
-        return False, 0.0, 0.0, 0
+        # ADDED FIX: Ensure all return values are present, including new ones
+        return False, 0.0, 0.0, 0, 100, FAILURE_MODES_MAPPING["E"]
 
     data_point = np.array([row[features].values])
     ml_prediction = model.predict(data_point)[0]
@@ -172,7 +218,22 @@ def check_ml_anomaly(row, model, features):
     base_rul_days = 30
     rul_days = max(1, int(base_rul_days + (ml_score * 100)))
 
-    return is_ml_anomaly, ml_score, confidence, rul_days
+    # --- NEW: Health Index Calculation ---
+    # Health Index is 100% when RUL > 30 days, drops linearly to 1% at RUL = 1 day
+    health_index = min(100, max(1, int((rul_days / 30) * 100)))
+
+    # --- NEW: Failure Mode Prediction (Placeholder for more complex logic) ---
+    is_rule_anomaly, _ = check_rule_based_anomalies(row)
+    predicted_failure_mode = determine_failure_mode(row, is_rule_anomaly, is_ml_anomaly)
+
+    return (
+        is_ml_anomaly,
+        ml_score,
+        confidence,
+        rul_days,
+        health_index,
+        predicted_failure_mode,
+    )
 
 
 # --- ROI Calculation Function ---
@@ -231,21 +292,36 @@ def calculate_pdm_roi(anomaly_count, cost_data):
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
 
-# CORRECTION: st.title changed to only include INDUSTRY_TITLE
 st.title(INDUSTRY_TITLE)
 st.write("Live data stream and anomaly detection for critical equipment.")
 
+# Initialize session state for simulation
+if "current_df" not in st.session_state:
+    initial_row = full_data_df.head(1).copy()
+    initial_row["Is_Rule_Anomaly"] = False
+    initial_row["Is_ML_Anomaly"] = False
+    initial_row["Anomaly_Reasoning"] = ""
+    initial_row["ML_Anomaly_Score"] = 0.0
+    initial_row["AI_Confidence"] = 0.0
+    initial_row["RUL_Days"] = 0
+    # --- NEW Session States ---
+    initial_row["Health_Index"] = 100
+    initial_row["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
+    st.session_state.current_df = initial_row
+    # -------------------------
+    st.session_state.current_row_index = 1
+    st.session_state.anomaly_count = 0
+    st.session_state.rul_days = 30
+    st.session_state.health_index = 100  # Track the current global health index
+
 # --- Sidebar Content ---
 with st.sidebar:
-    # CORRECTION: Added LOGO_TEXT at the top of the sidebar
     st.header(LOGO_TEXT)
-    st.markdown("---")  # Visual separation after the logo title
+    st.markdown("---")
 
-    # CORRECTION: Removed emoticon from role selector
     role = st.radio("Select User Role:", ("Plant Manager", "Technician"), index=0)
     st.markdown("---")
 
-    # CORRECTION: Removed emoticons from sidebar headers
     st.header("Asset Context & Location")
     st.info(
         f"""
@@ -273,26 +349,10 @@ with st.sidebar:
 
 # Conditional title for the main dashboard
 if role == "Plant Manager":
-    # CORRECTION: Removed emoticons from header
     st.header("Executive Financial & Asset Health Overview")
 else:
-    # CORRECTION: Removed emoticons from header
     st.header("Technician's Detailed Sensor & AI Diagnostics")
 
-
-# Initialize session state for simulation
-if "current_df" not in st.session_state:
-    initial_row = full_data_df.head(1).copy()
-    initial_row["Is_Rule_Anomaly"] = False
-    initial_row["Is_ML_Anomaly"] = False
-    initial_row["Anomaly_Reasoning"] = ""
-    initial_row["ML_Anomaly_Score"] = 0.0
-    initial_row["AI_Confidence"] = 0.0
-    initial_row["RUL_Days"] = 0
-    st.session_state.current_df = initial_row
-    st.session_state.current_row_index = 1
-    st.session_state.anomaly_count = 0
-    st.session_state.rul_days = 30
 
 # Create empty placeholders for all dynamic UI elements
 kpi_placeholder = st.empty()
@@ -304,14 +364,12 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
     """Updates the dashboard for the Plant Manager (Financial KPIs/ROI)."""
 
     roi_data = calculate_pdm_roi(anomaly_count, FAILURE_COST_DATA)
-    latest_row = current_df.iloc[-1]
 
     with kpi_ph.container():
         st.subheader("Financial Performance & Predictive Insights")
 
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-        # CORRECTION: Removed emoticons from metric labels
         col_kpi1.metric(
             "Total Savings (YTD)", CURRENCY_FORMAT.format(roi_data["Total Savings"])
         )
@@ -327,7 +385,6 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         )
         col_kpi4.metric("Predicted RUL", rul_display)
 
-    # REFINEMENT: Ensure alert_ph handles the entire alert section, including the header.
     with alert_ph.container():
         st.subheader("ROI Justification & Operational Status")
 
@@ -342,7 +399,6 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             last_anomaly = current_df[
                 current_df["Is_Rule_Anomaly"] | current_df["Is_ML_Anomaly"]
             ].iloc[-1]
-            # CORRECTION: Removed emoticons from st.error and st.markdown
             st.error(
                 f"CRITICAL ALERT: Potential failure predicted! RUL is **{st.session_state.rul_days} days**."
             )
@@ -350,7 +406,6 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
                 f"**Anomaly Cause:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'AI Detected: Uncategorized Anomaly.'}"
             )
         else:
-            # CORRECTION: Removed emoticons from st.success
             st.success("System Health: Excellent. No immediate financial risk.")
 
     with chart_placeholder.container():
@@ -385,8 +440,16 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         col_kpi1.metric("Latest Vibration", f"{latest_row['Vibration']:.2f}g")
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
-        # CORRECTION: Removed emoticons from metric labels
-        col_kpi3.metric("AI Confidence", f"{latest_row['AI_Confidence']:.1f}%")
+        # --- NEW KPI: Health Index ---
+        health_delta_value = st.session_state.current_df["Health_Index"].diff().iloc[-1]
+        health_delta = (
+            f"{health_delta_value:.1f}" if not pd.isna(health_delta_value) else None
+        )
+        col_kpi3.metric(
+            "Health Index", f"{st.session_state.health_index}%", delta=health_delta
+        )
+        # -----------------------------
+
         col_kpi4.metric("RUL (Predicted)", f"{st.session_state.rul_days} Days")
 
     # REFINEMENT: Use alert_ph to handle the status alert
@@ -402,15 +465,25 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
 
             if not anomalies.empty:
                 last_anomaly = anomalies.iloc[-1]
-                # CORRECTION: Removed emoticons from st.error
+
+                # --- NEW: Predicted Failure Mode in Alert ---
+                predicted_mode = last_anomaly["Predicted_Failure_Mode"]
+
                 st.error(
                     f"IMMEDIATE ACTION REQUIRED: Failure predicted in **{st.session_state.rul_days} days**."
                 )
+
                 st.markdown(
-                    f"**Root Cause Analysis:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
+                    f"**Predicted Failure Mode:** <span style='color: #FF4B4B; font-weight: bold;'>{predicted_mode}</span>",
+                    unsafe_allow_html=True,
+                )
+                # -------------------------------------------
+
+                st.markdown(
+                    f"**Sensor Indicators:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
                 )
                 st.markdown(
-                    f"**ML Score:** `{last_anomaly['ML_Anomaly_Score']:.4f}` **| AI Confidence:** `{last_anomaly['AI_Confidence']:.1f}%`"
+                    f"**AI Confidence:** `{last_anomaly['AI_Confidence']:.1f}%`"
                 )
 
                 # --- Detailed Anomaly Chart (inside expander) ---
@@ -447,34 +520,79 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                         key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
                     )
             else:
-                # CORRECTION: Removed emoticons from st.success
                 st.success(
                     "System Operating Normally - All sensor data within acceptable limits."
                 )
 
         else:
-            # CORRECTION: Removed emoticons from st.success
             st.success(
                 "System Operating Normally - All sensor data within acceptable limits."
             )
 
-    # --- Full Sensor Chart ---
+    # --- Charts Section ---
     with chart_ph.container():  # Use the allocated placeholder for the main chart
-        st.subheader("Full History Sensor Data Monitoring")
-        df_display_full = current_df.tail(1000)
-        fig_main = px.line(
-            df_display_full,
-            x=df_display_full.index,
-            y=["Power_kW", "Amperage", "Vibration", "Temperature"],
-            labels={"value": "Value", "Timestamp": "Time"},
-            title="Live Sensor Data Stream (Last 1000 Points)",
-        )
-        fig_main.update_layout(height=500, xaxis_title="Timestamp")
-        st.plotly_chart(
-            fig_main,
-            use_container_width=True,
-            key=f"tech_main_chart_{st.session_state.current_row_index}",
-        )
+        col_chart_1, col_chart_2 = st.columns([2, 1])
+
+        # Chart 1: Full Sensor Data Monitoring
+        with col_chart_1:
+            st.subheader("Full History Sensor Data Monitoring")
+            df_display_full = current_df.tail(1000)
+            fig_main = px.line(
+                df_display_full,
+                x=df_display_full.index,
+                y=["Power_kW", "Amperage", "Vibration", "Temperature"],
+                labels={"value": "Value", "Timestamp": "Time"},
+                title="Live Sensor Data Stream (Last 1000 Points)",
+            )
+            fig_main.update_layout(height=400, xaxis_title="Timestamp")
+            st.plotly_chart(
+                fig_main,
+                use_container_width=True,
+                key=f"tech_main_chart_{st.session_state.current_row_index}",
+            )
+
+        # Chart 2: NEW - Health Index Trend
+        with col_chart_2:
+            st.subheader("Asset Health Index Trend")
+            df_health_trend = current_df.copy()
+            df_health_trend = df_health_trend[df_health_trend["Health_Index"] > 0]
+
+            fig_health = go.Figure(
+                go.Indicator(
+                    mode="gauge+number+delta",
+                    value=st.session_state.health_index,
+                    domain={"x": [0, 1], "y": [0, 1]},
+                    title={"text": "Current Health Score"},
+                    delta={
+                        "reference": 100,
+                        "increasing": {"color": "#009900"},
+                        "decreasing": {"color": "#FF4B4B"},
+                    },
+                    gauge={
+                        "axis": {
+                            "range": [0, 100],
+                            "tickwidth": 1,
+                            "tickcolor": "darkblue",
+                        },
+                        "bar": {"color": "darkblue"},
+                        "bgcolor": "white",
+                        "borderwidth": 2,
+                        "bordercolor": "gray",
+                        "steps": [
+                            {"range": [0, 25], "color": "red"},
+                            {"range": [25, 75], "color": "yellow"},
+                            {"range": [75, 100], "color": "green"},
+                        ],
+                        "threshold": {
+                            "line": {"color": "red", "width": 4},
+                            "thickness": 0.75,
+                            "value": 25,
+                        },
+                    },
+                )
+            )
+            fig_health.update_layout(height=400)
+            st.plotly_chart(fig_health, use_container_width=True)
 
 
 def update_dashboard(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, role):
@@ -492,18 +610,21 @@ while st.session_state.current_row_index < len(full_data_df):
             st.session_state.current_row_index : st.session_state.current_row_index + 1
         ].copy()
 
-        # ADDED FIX: Check if the sliced DataFrame is empty
         if next_row.empty:
-            # CORRECTION: Removed emoticons from st.warning
             st.warning("Data stream ended unexpectedly. Exiting simulation.")
             break
 
         row_to_process = next_row.iloc[0]  # Safely get the row
 
         is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row_to_process)
-        is_ml_anomaly, ml_score, ai_confidence, rul_days_current = check_ml_anomaly(
-            row_to_process, iso_forest_model, ml_features
-        )
+        (
+            is_ml_anomaly,
+            ml_score,
+            ai_confidence,
+            rul_days_current,
+            health_index_current,
+            predicted_failure_mode,
+        ) = check_ml_anomaly(row_to_process, iso_forest_model, ml_features)
 
         next_row.loc[:, "Is_Rule_Anomaly"] = is_rule_anomaly
         next_row.loc[:, "Is_ML_Anomaly"] = is_ml_anomaly
@@ -511,15 +632,28 @@ while st.session_state.current_row_index < len(full_data_df):
         next_row.loc[:, "ML_Anomaly_Score"] = ml_score
         next_row.loc[:, "AI_Confidence"] = ai_confidence
         next_row.loc[:, "RUL_Days"] = rul_days_current
+        # --- NEW Columns for Technician View ---
+        next_row.loc[:, "Health_Index"] = health_index_current
+        next_row.loc[:, "Predicted_Failure_Mode"] = predicted_failure_mode
+        # ----------------------------------------
 
         st.session_state.current_df = pd.concat([st.session_state.current_df, next_row])
         st.session_state.current_row_index += 1
 
+        # --- Update Global State ---
         if is_rule_anomaly or is_ml_anomaly:
             st.session_state.anomaly_count += 1
             st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
+            st.session_state.health_index = min(
+                st.session_state.health_index, health_index_current
+            )
         elif st.session_state.rul_days < 30 and ml_score > 0:
+            # If system recovers, RUL and HI should slowly improve
             st.session_state.rul_days = min(30, st.session_state.rul_days + 1)
+            st.session_state.health_index = min(
+                100, st.session_state.health_index + 3
+            )  # Slowly improve HI
+        # ---------------------------
 
         update_dashboard(
             kpi_placeholder,
@@ -533,7 +667,6 @@ while st.session_state.current_row_index < len(full_data_df):
         time.sleep(DATA_POINT_INTERVAL)
 
     except Exception as e:
-        # CORRECTION: Removed emoticons from st.error
         st.error(
             f"Error: The simulation crashed while processing row {st.session_state.current_row_index}."
         )
