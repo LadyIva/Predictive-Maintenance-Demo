@@ -352,7 +352,6 @@ def get_maintenance_schedule(rul_days, current_timestamp):
 
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
 
-
 # --- Initial Setup ---
 # Find the default starting index (Aug 1st)
 default_start_date_label = "Start (Aug 1)"
@@ -392,7 +391,6 @@ if "current_df" not in st.session_state:
 
 st.title(INDUSTRY_TITLE)
 st.write("Live data stream and anomaly detection for critical equipment.")
-
 
 # --- Sidebar Content ---
 with st.sidebar:
@@ -644,7 +642,7 @@ def update_plant_manager_view(content_ph, current_df, anomaly_count):
         st.markdown("---")
 
         # Maintenance Schedule Forecast
-        st.markdown(f"🗓️ **Proactive Maintenance Schedule Forecast**")
+        st.markdown(f"**Proactive Maintenance Schedule Forecast**")
         if risk_color in ["red", "orange"]:
             st.markdown(
                 f"The current Remaining Useful Life (RUL) of **{rul_days} days** dictates the following maintenance window:"
