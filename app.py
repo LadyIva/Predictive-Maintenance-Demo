@@ -40,8 +40,9 @@ FAILURE_COST_DATA = {
 }
 
 
-# --- 1. Load Data and Initialize Models (Runs only once) ---
-@st.cache_data
+# --- 1. Load Data and Initialize Models ---
+# Caching decorators have been removed to comply with the request to "disable caching."
+# WARNING: This will cause the functions to re-execute on every user interaction, potentially impacting performance.
 def load_data(file_path):
     try:
         if not os.path.exists(file_path):
@@ -91,7 +92,6 @@ def load_data(file_path):
         st.stop()
 
 
-@st.cache_resource
 def train_isolation_forest(df_initial):
     if df_initial.empty:
         return None, None
@@ -109,7 +109,7 @@ def train_isolation_forest(df_initial):
 full_data_df = load_data(file_path)
 
 try:
-    # Train the model on the first 1000 clean data points
+    # We still only train the model on the first 1000 rows as intended.
     iso_forest_model, ml_features = train_isolation_forest(full_data_df.head(1000))
 except Exception as e:
     st.error(f"An error occurred during model training: {e}")
@@ -331,76 +331,6 @@ def get_maintenance_schedule(rul_days, current_timestamp):
 
 # ----------------------------------------------------
 
-
-# --- NEW ADDON FUNCTION: Jump Processing ---
-def process_data_jump(start_index, end_index, df, model, features):
-    """Processes a range of data points quickly to update the simulation state."""
-
-    # Process only the skipped chunk of data
-    df_chunk = df.iloc[start_index:end_index].copy()
-
-    # Retrieve current state
-    current_anomaly_count = st.session_state.anomaly_count
-    current_rul_days = st.session_state.rul_days
-    current_health_index = st.session_state.health_index
-
-    processed_rows = []
-
-    for _, row_to_process in df_chunk.iterrows():
-        # Re-apply the full processing logic
-        is_rule_anomaly, rule_reasoning = check_rule_based_anomalies(row_to_process)
-        (
-            is_ml_anomaly,
-            ml_score,
-            ai_confidence,
-            rul_days_current,
-            health_index_current,
-            predicted_failure_mode,
-        ) = check_ml_anomaly(row_to_process, model, features)
-
-        # --- Update Global State for the skipped row ---
-        if is_rule_anomaly or is_ml_anomaly:
-            current_anomaly_count += 1
-            current_rul_days = min(current_rul_days, rul_days_current)
-            current_health_index = min(current_health_index, health_index_current)
-        elif current_rul_days < 30 and ml_score > 0:
-            # If system recovers, RUL and HI should slowly improve
-            current_rul_days = min(30, current_rul_days + 1)
-            current_health_index = min(100, current_health_index + 3)
-
-        # Store the processed row data in a dict
-        row_data = row_to_process.to_dict()
-        row_data["Is_Rule_Anomaly"] = is_rule_anomaly
-        row_data["Is_ML_Anomaly"] = is_ml_anomaly
-        row_data["Anomaly_Reasoning"] = rule_reasoning
-        row_data["ML_Anomaly_Score"] = ml_score
-        row_data["AI_Confidence"] = ai_confidence
-        row_data["RUL_Days"] = rul_days_current
-        row_data["Health_Index"] = health_index_current
-        row_data["Predicted_Failure_Mode"] = predicted_failure_mode
-        processed_rows.append(row_data)
-
-    # --- Update session state with aggregated results ---
-    if processed_rows:
-        # Create a temporary DataFrame from the list of dictionaries and set the index
-        df_processed_chunk = pd.DataFrame(processed_rows, index=df_chunk.index)
-
-        # Concatenate the processed chunk to the existing DataFrame
-        # pd.concat handles the DataFrame index correctly (Timestamp in this case)
-        st.session_state.current_df = pd.concat(
-            [st.session_state.current_df, df_processed_chunk]
-        )
-
-    # Update the counters regardless of whether data was processed
-    st.session_state.anomaly_count = current_anomaly_count
-    st.session_state.rul_days = current_rul_days
-    st.session_state.health_index = current_health_index
-    st.session_state.current_row_index = end_index  # Set the index to the jump target
-
-
-# -------------------------------------------------------
-
-
 # --- 3. Streamlit UI Rendering and Simulation Logic ---
 
 st.title(INDUSTRY_TITLE)
@@ -414,55 +344,39 @@ if "current_df" not in st.session_state:
     initial_row["Anomaly_Reasoning"] = ""
     initial_row["ML_Anomaly_Score"] = 0.0
     initial_row["AI_Confidence"] = 0.0
-    initial_row["RUL_Days"] = 30  # Set initial RUL
+    initial_row["RUL_Days"] = 0
     initial_row["Health_Index"] = 100
     initial_row["Predicted_Failure_Mode"] = FAILURE_MODES_MAPPING["E"]
     st.session_state.current_df = initial_row
     st.session_state.current_row_index = 1
     st.session_state.anomaly_count = 0
-    st.session_state.rul_days = 30  # Track the current global RUL
+    st.session_state.rul_days = 30
     st.session_state.health_index = 100  # Track the current global health index
-    st.session_state.jump_target_index = -1  # NEW: Sentinel for jump logic
 
 # --- Sidebar Content ---
 with st.sidebar:
     st.header(LOGO_TEXT)
     st.markdown("---")
 
-    role = st.radio("Select User Role:", ("Plant Manager", "Technician"), index=0)
-    st.markdown("---")
+    # We need to ensure the radio button value is consistent across reruns
+    if "selected_role" not in st.session_state:
+        st.session_state.selected_role = "Plant Manager"
 
-    # --- NEW: Simulation Jump Control ---
-    st.header("Simulation Control")
-    max_index = len(full_data_df)
-
-    # Use a custom key to manage the slider state
-    jump_index = st.slider(
-        "Simulation Speed Jump (Data Index)",
-        # Ensure min_value is always the current index to prevent backward jumps
-        min_value=st.session_state.current_row_index,
-        max_value=max_index,
-        value=st.session_state.current_row_index,
-        step=int(max_index / 500) or 1,  # Make step size dynamic for large datasets
-        key="jump_slider",
+    role = st.radio(
+        "Select User Role:",
+        ("Plant Manager", "Technician"),
+        key="role_radio",  # Add key for explicit management
+        index=0,
     )
-
-    if st.button("Jump to Data Index", use_container_width=True):
-        if jump_index > st.session_state.current_row_index:
-            st.session_state.jump_target_index = jump_index
-            st.rerun()  # Trigger a rerun to execute the jump logic
-        else:
-            st.warning("Cannot jump backward or jump to the current index.")
-
+    st.session_state.selected_role = role
     st.markdown("---")
-    # ----------------------------------
 
     st.header("Asset Context & Location")
     st.info(
         f"""
     **Asset:** Primary {INDUSTRY_TITLE}
     **Location:** Free State, South Africa
-    **Objective:** Predict mechanical or electrical failure
+    **Objective:** Predict mechanical or electrical failure 
     using real-time **Vibration, Temperature, Power, and Amperage** data.
     """
     )
@@ -473,26 +387,44 @@ with st.sidebar:
     st.markdown(
         """
     Our solution provides **Actionable Intelligence** by:
-    -   **Maximizing Uptime:** Predicting RUL (Remaining Useful Life) for proactive scheduling.
-    -   **Quantifiable ROI:** Tracking and justifying savings by avoiding catastrophic failures.
-    -   **Optimizing Energy:** Identifying operational inefficiencies via Power/Amperage anomalies.
+    - **Maximizing Uptime:** Predicting RUL (Remaining Useful Life) for proactive scheduling.
+    - **Quantifiable ROI:** Tracking and justifying savings by avoiding catastrophic failures.
+    - **Optimizing Energy:** Identifying operational inefficiencies via Power/Amperage anomalies.
     """
     )
+
+    # --- The Caching Fix Implementation ---
+    st.markdown("---")
+    st.header("Admin Controls")
+
+    # Button to manually clear the cache for a "hard reset"
+    if st.button(
+        "Clear All App Cache & Rerun",
+        help="Clears the cache for data and resources, forcing reload of models.",
+    ):
+        # Clear the session state to reset the simulation completely
+        keys_to_delete = list(st.session_state.keys())
+        for key in keys_to_delete:
+            del st.session_state[key]
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+    # ------------------------------------
+
     st.markdown("---")
     st.caption(f"Powered by {LOGO_TEXT} in the Free State.")
 
 
 # Conditional title for the main dashboard
-if role == "Plant Manager":
+if st.session_state.selected_role == "Plant Manager":
     st.header("Executive Financial & Asset Health Overview")
 else:
     st.header("Technician's Detailed Sensor & AI Diagnostics")
 
 
 # Create empty placeholders for all dynamic UI elements
-kpi_placeholder = st.empty()
-alert_placeholder = st.empty()
-chart_placeholder = st.empty()
+# Using a single parent placeholder for all dynamic content is often the best way to prevent CLS
+main_content_placeholder = st.empty()
 
 
 def get_financial_risk_level(rul_days, anomaly_count, cost_at_risk):
@@ -504,7 +436,6 @@ def get_financial_risk_level(rul_days, anomaly_count, cost_at_risk):
         "Operation is healthy. The PdM system is maintaining optimal reliability."
     )
 
-    # Only show alerts if a real anomaly has occurred
     if anomaly_count == 0:
         return risk_level, risk_color, risk_summary
 
@@ -529,25 +460,30 @@ def get_financial_risk_level(rul_days, anomaly_count, cost_at_risk):
     return risk_level, risk_color, risk_summary
 
 
-def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
+def update_plant_manager_view(content_ph, current_df, anomaly_count):
     """Updates the dashboard for the Plant Manager (Financial KPIs/ROI)."""
 
-    roi_data = calculate_pdm_roi(anomaly_count, FAILURE_COST_DATA)
-    cost_at_risk = roi_data["Potential Downtime Cost"]
-    rul_days = st.session_state.rul_days
+    # 1. Clear the placeholder content to prevent visual artifacts
+    content_ph.empty()
 
-    # Get the latest timestamp for scheduling
-    latest_timestamp = current_df.index[-1]
-    maintenance_schedule = get_maintenance_schedule(rul_days, latest_timestamp)
+    # 2. Draw all content inside the placeholder's context
+    with content_ph.container():
 
-    risk_level, risk_color, risk_summary = get_financial_risk_level(
-        rul_days, anomaly_count, cost_at_risk
-    )
+        roi_data = calculate_pdm_roi(anomaly_count, FAILURE_COST_DATA)
+        cost_at_risk = roi_data["Potential Downtime Cost"]
+        rul_days = st.session_state.rul_days
 
-    with kpi_ph.container():
+        # Get the latest timestamp for scheduling
+        latest_timestamp = current_df.index[-1]
+        maintenance_schedule = get_maintenance_schedule(rul_days, latest_timestamp)
+
+        risk_level, risk_color, risk_summary = get_financial_risk_level(
+            rul_days, anomaly_count, cost_at_risk
+        )
+
+        # --- KPI Section ---
         st.subheader("Financial Performance & Predictive Insights")
 
-        # Expanded to 5 columns for new KPI
         col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
 
         col_kpi1.metric(
@@ -558,8 +494,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
         )
         col_kpi3.metric("Total Anomalies", anomaly_count)
 
-        # --- NEW ADDON KPI: Asset Health Rank ---
-        # Simulate a ranking based on Health Index
+        # --- Asset Health Rank ---
         if st.session_state.health_index > 80:
             asset_rank = "1/12 (Best)"
             rank_delta = "High Priority"
@@ -575,10 +510,9 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             asset_rank,
             delta=f"HI: {st.session_state.health_index}%",
         )
-        # -----------------------------------------
 
         if risk_color == "red":
-            st_color = "🔥"  # Use an emoji for high impact
+            st_color = "🔥"
         elif risk_color == "orange":
             st_color = "⚠️"
         else:
@@ -589,12 +523,11 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             f"{st_color} {risk_level}",
             delta=f"RUL: {rul_days} Days",
         )
-        # -------------------------------------
 
-    with alert_ph.container():
-        st.subheader(
-            "Risk-Weighted Alert, Schedule & Justification"
-        )  # Updated Subheader
+        st.markdown("---")
+
+        # --- Alert & Scheduling Section ---
+        st.subheader("Risk-Weighted Alert, Schedule & Justification")
 
         # Display Risk-Weighted Alert
         if risk_color == "red":
@@ -608,7 +541,7 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
 
         st.markdown("---")
 
-        # --- NEW ADDON: Maintenance Schedule Forecast ---
+        # Maintenance Schedule Forecast
         st.markdown(f"**Proactive Maintenance Schedule Forecast**")
         if risk_color in ["red", "orange"]:
             st.markdown(
@@ -623,7 +556,6 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             st.info(maintenance_schedule)
 
         st.markdown("---")
-        # --------------------------------------------
 
         # Display ROI Justification (This is the long-term value statement)
         st.info(
@@ -631,7 +563,9 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             f"{roi_data['Justification']}"
         )
 
-    with chart_placeholder.container():
+        st.markdown("---")
+
+        # --- Chart Section ---
         st.subheader("Key Sensor Data Trends")
         df_display = current_df.tail(200)  # Show a recent window
         fig_main = px.line(
@@ -645,23 +579,28 @@ def update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count):
             title="Recent Power and Vibration Trend",
         )
         fig_main.update_layout(height=400, xaxis_title="Timestamp")
+        # Ensure the key is fully dynamic to force a clean redraw
         st.plotly_chart(
             fig_main,
             use_container_width=True,
-            key=f"pm_main_chart_{st.session_state.current_row_index}",
+            key=f"pm_main_chart_{st.session_state.current_row_index}_v{rul_days}",
         )
         # -------------------------------
 
 
-def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count):
+def update_technician_view(content_ph, current_df, anomaly_count):
     """Updates the dashboard for the Technician (Sensor Charts/AI scores)."""
+
+    # 1. Clear the placeholder content to prevent visual artifacts
+    content_ph.empty()
 
     if current_df.empty:
         return
 
     latest_row = current_df.iloc[-1]
 
-    with kpi_ph.container():
+    with content_ph.container():
+        # --- KPI Section ---
         st.subheader("Key Sensor Readings & AI Diagnostics")
         col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
@@ -669,21 +608,26 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         col_kpi2.metric("Latest Temperature", f"{latest_row['Temperature']:.2f}°C")
 
         # --- KPI: Health Index ---
+        # The .diff() calculation will often return NaN or be less accurate in a simulation loop,
+        # but we keep it for the concept. We ensure the key is dynamic.
         health_delta_value = st.session_state.current_df["Health_Index"].diff().iloc[-1]
         health_delta = (
             f"{health_delta_value:.1f}"
             if not pd.isna(health_delta_value) and health_delta_value != 0
             else None
         )
+
         col_kpi3.metric(
             "Health Index", f"{st.session_state.health_index}%", delta=health_delta
         )
-        # -----------------------------
 
         col_kpi4.metric("RUL (Predicted)", f"{st.session_state.rul_days} Days")
 
-    # REFINEMENT: Use alert_ph to handle the status alert
-    with alert_ph.container():
+        st.markdown("---")
+
+        # --- Alert Section ---
+        st.subheader("Immediate Action & Diagnostic Report")
+
         # Corrected: Only show a detailed alert if RUL is low (critical)
         if st.session_state.rul_days <= 30 and anomaly_count > 0:
 
@@ -713,7 +657,6 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                     f"**RECOMMENDED ACTION:** <span style='color: #FF4B4B; font-weight: bold;'>{recommended_action}</span>",
                     unsafe_allow_html=True,
                 )
-                # -------------------------------------------
 
                 st.markdown(
                     f"**Sensor Indicators:** {last_anomaly['Anomaly_Reasoning'] if last_anomaly['Anomaly_Reasoning'] else 'ML Detected: Uncategorized Anomaly.'}"
@@ -753,8 +696,8 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                     st.plotly_chart(
                         fig_anomaly,
                         use_container_width=True,
-                        # This key is safe as it updates with every iteration
-                        key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}",
+                        # Key uses anomaly timestamp and current index, so it is safe.
+                        key=f"tech_anomaly_chart_{last_anomaly.name.isoformat()}_{st.session_state.current_row_index}_v{st.session_state.rul_days}",
                     )
             else:
                 st.success(
@@ -766,8 +709,9 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
                 "System Operating Normally - All sensor data within acceptable limits."
             )
 
-    # --- Charts Section ---
-    with chart_ph.container():  # Use the allocated placeholder for the main chart
+        st.markdown("---")
+
+        # --- Charts Section ---
 
         # Chart 1: Full Sensor Data Monitoring (Now full width)
         st.subheader("Full History Sensor Data Monitoring")
@@ -783,8 +727,8 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
         st.plotly_chart(
             fig_main,
             use_container_width=True,
-            # This key is safe as it updates with every iteration
-            key=f"tech_main_chart_{st.session_state.current_row_index}",
+            # Key is safe as it updates with every iteration
+            key=f"tech_main_chart_{st.session_state.current_row_index}_v{st.session_state.rul_days}",
         )
 
         # --- NEW CHART: Failure Mode Breakdown ---
@@ -822,54 +766,19 @@ def update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count
             st.plotly_chart(
                 fig_modes,
                 use_container_width=True,
-                key=f"tech_failure_modes_chart_{st.session_state.current_row_index}",
+                key=f"tech_failure_modes_chart_{st.session_state.current_row_index}_v{st.session_state.rul_days}",
             )
         else:
             st.info("No predictive failure modes detected yet.")
         # ----------------------------------------
 
 
-def update_dashboard(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count, role):
+def update_dashboard(content_ph, current_df, anomaly_count, role):
     """Function to call the appropriate view update function."""
     if role == "Plant Manager":
-        update_plant_manager_view(kpi_ph, alert_ph, current_df, anomaly_count)
+        update_plant_manager_view(content_ph, current_df, anomaly_count)
     else:  # Technician
-        update_technician_view(kpi_ph, alert_ph, chart_ph, current_df, anomaly_count)
-
-
-# --- JUMP LOGIC (Executed on every rerun if a jump was requested) ---
-if st.session_state.get("jump_target_index", -1) != -1:
-    target_index = st.session_state.jump_target_index
-    current_index = st.session_state.current_row_index
-
-    if target_index > current_index:
-        # Provide feedback and process the data jump
-        # The spinner ensures the user knows work is being done instantly
-        with st.spinner(
-            f"Jumping simulation from index {current_index} to {target_index} ({target_index - current_index} data points skipped)..."
-        ):
-            process_data_jump(
-                current_index, target_index, full_data_df, iso_forest_model, ml_features
-            )
-
-        # Update the dashboard once with the new state
-        update_dashboard(
-            kpi_placeholder,
-            alert_placeholder,
-            chart_placeholder,
-            st.session_state.current_df,
-            st.session_state.anomaly_count,
-            role,
-        )
-
-        # Reset the jump request flag
-        st.session_state.jump_target_index = -1
-        # Stop the script execution, the new state will be reflected upon the next interaction/rerun
-        st.stop()
-    else:
-        # Safety reset for backward/no jump
-        st.session_state.jump_target_index = -1
-# ------------------------------------------------------------------
+        update_technician_view(content_ph, current_df, anomaly_count)
 
 
 # The continuous simulation loop
@@ -910,7 +819,6 @@ while st.session_state.current_row_index < len(full_data_df):
         # --- Update Global State ---
         if is_rule_anomaly or is_ml_anomaly:
             st.session_state.anomaly_count += 1
-            # Update RUL/HI only if the new value is worse
             st.session_state.rul_days = min(st.session_state.rul_days, rul_days_current)
             st.session_state.health_index = min(
                 st.session_state.health_index, health_index_current
@@ -923,13 +831,12 @@ while st.session_state.current_row_index < len(full_data_df):
             )  # Slowly improve HI
         # ---------------------------
 
+        # Pass the single main placeholder
         update_dashboard(
-            kpi_placeholder,
-            alert_placeholder,
-            chart_placeholder,
+            main_content_placeholder,
             st.session_state.current_df,
             st.session_state.anomaly_count,
-            role,
+            st.session_state.selected_role,  # Use the role from session state
         )
 
         time.sleep(DATA_POINT_INTERVAL)
